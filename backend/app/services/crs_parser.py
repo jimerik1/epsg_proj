@@ -12,7 +12,11 @@ class CustomCRSParser:
         return {k: v for k, v in el.attrib.items()}
 
     def parse_xml_to_proj(self, xml_string: str) -> str:
-        root = ET.fromstring(xml_string)
+        # Ensure a single XML root: try parse, else wrap
+        try:
+            root = ET.fromstring(xml_string)
+        except ET.ParseError:
+            root = ET.fromstring(f"<root>{xml_string}</root>")
 
         geo_system = self._parse_element(root, 'CD_GEO_SYSTEM') or {}
         geo_zone = self._parse_element(root, 'CD_GEO_ZONE') or {}
@@ -63,4 +67,3 @@ class CustomCRSParser:
         for k, v in definition.items():
             parts.append(f"+{k}={v}")
         return " ".join(parts)
-
