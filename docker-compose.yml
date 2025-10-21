@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3001:3001"
+    environment:
+      - PROJ_NETWORK=ON
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./backend:/app
+      - proj-data:/app/proj_data
+    depends_on:
+      - redis
+    networks:
+      - crs-network
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:3001
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - crs-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - crs-network
+    volumes:
+      - redis-data:/data
+
+networks:
+  crs-network:
+    driver: bridge
+
+volumes:
+  proj-data:
+  redis-data:
+
