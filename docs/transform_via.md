@@ -8,7 +8,7 @@ Transform through a user-defined sequence of CRS codes.
 ## Request
 
 ### Example: Lon/lat seed into multi-step path
-The first CRS in `path` is geographic, so the payload uses lon/lat names.
+The first CRS in `path` is geographic, so the payload uses lon/lat names. Hit [`/api/crs/info`](crs_info.md) if you need to confirm the CRS type before building the path.
 
 ```http
 POST /api/transform/via

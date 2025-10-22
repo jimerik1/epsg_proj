@@ -8,7 +8,7 @@ Transform with a custom CRS definition expressed in XML.
 ## Request
 
 ### Example: Geographic input into custom CRS
-Use lon/lat when the upstream CRS is geographic.
+Use lon/lat when the upstream CRS is geographic. If in doubt, query [`/api/crs/info`](crs_info.md) to see the CRS type flags.
 
 ```http
 POST /api/transform/custom

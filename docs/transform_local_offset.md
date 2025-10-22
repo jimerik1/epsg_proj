@@ -8,7 +8,7 @@ Convert a true-distance local offset (ENU) using the ECEF pipeline and scale-fac
 ## Request
 
 ### Example: Geographic reference + ENU offset
-Reference point supplied as lon/lat; the service will project it before applying ECEF mathematics.
+Reference point supplied as lon/lat; the service will project it before applying ECEF mathematics. Use [`/api/crs/info`](crs_info.md) to check the CRS type when you’re unsure.
 
 ```http
 POST /api/transform/local-offset

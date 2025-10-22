@@ -8,7 +8,7 @@ Batch transformation of trajectory points from CRS A to CRS B.
 ## Request
 
 ### Example: Geographic trajectory
-Each point uses `x`/`y` for convenience, but they represent lon/lat because the source CRS is `EPSG:4326`.
+Each point uses `x`/`y` for convenience, but they represent lon/lat because the source CRS is `EPSG:4326`. Use [`/api/crs/info`](crs_info.md) when you need to confirm whether a CRS is geographic before choosing field names.
 
 ```http
 POST /api/transform/trajectory

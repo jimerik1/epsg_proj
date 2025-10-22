@@ -8,7 +8,7 @@ Apply the ECEF and/or scale-factor pipeline to an entire trajectory expressed in
 ## Request
 
 ### Example: Geographic reference + true-distance trajectory
-Supply lon/lat for the anchor point and true ENU offsets for every survey station.
+Supply lon/lat for the anchor point and true ENU offsets for every survey station. [`/api/crs/info`](crs_info.md) exposes `is_geographic`/`is_projected` flags if you need to confirm the CRS type first.
 
 ```http
 POST /api/transform/local-trajectory

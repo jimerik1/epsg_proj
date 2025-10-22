@@ -8,7 +8,7 @@ Single coordinate transformation between source and target CRS.
 ## Request
 
 ### Example: Geographic input (lon/lat keys)
-The payload uses `lon`/`lat` because the source CRS is geographic. The backend maps these fields internally before calling PROJ.
+The payload uses `lon`/`lat` because the source CRS is geographic. Unsure whether a CRS is geographic or projected? Call [`/api/crs/info`](crs_info.md) first and check the `is_geographic` / `is_projected` flags. The backend maps these fields internally before calling PROJ.
 
 ```http
 POST /api/transform/direct
