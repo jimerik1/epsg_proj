@@ -6,6 +6,10 @@
 Batch transformation of trajectory points from CRS A to CRS B.
 
 ## Request
+
+### Example: Geographic trajectory
+Each point uses `x`/`y` for convenience, but they represent lon/lat because the source CRS is `EPSG:4326`.
+
 ```http
 POST /api/transform/trajectory
 Content-Type: application/json
@@ -18,6 +22,25 @@ Content-Type: application/json
   "trajectory_points": [
     {"id": "P1", "x": 2.2945, "y": 48.8584},
     {"id": "P2", "x": 2.2955, "y": 48.8589}
+  ]
+}
+```
+
+### Example: Projected trajectory
+Supply easting/northing pairs when the source CRS is projected.
+
+```http
+POST /api/transform/trajectory
+Content-Type: application/json
+```
+
+```json
+{
+  "source_crs": "EPSG:32631",
+  "target_crs": "EPSG:4326",
+  "trajectory_points": [
+    {"id": "P1", "x": 448249.35, "y": 5411932.67},
+    {"id": "P2", "x": 448350.02, "y": 5412033.41}
   ]
 }
 ```

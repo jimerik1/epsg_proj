@@ -6,6 +6,10 @@
 Convert a true-distance local offset (ENU) using the ECEF pipeline and scale-factor approximation.
 
 ## Request
+
+### Example: Geographic reference + ENU offset
+Reference point supplied as lon/lat; the service will project it before applying ECEF mathematics.
+
 ```http
 POST /api/transform/local-offset
 Content-Type: application/json
@@ -15,6 +19,22 @@ Content-Type: application/json
 {
   "crs": "EPSG:32040",
   "reference": {"lon": -99.2053, "lat": 29.3513, "height": 0},
+  "offset": {"east": 10, "north": 10, "up": 0}
+}
+```
+
+### Example: Projected reference + ENU offset
+If you already have easting/northing for the reference, pass them as `x`/`y`.
+
+```http
+POST /api/transform/local-offset
+Content-Type: application/json
+```
+
+```json
+{
+  "crs": "EPSG:32040",
+  "reference": {"x": 1934594.06, "y": 551965.15, "height": 0},
   "offset": {"east": 10, "north": 10, "up": 0}
 }
 ```

@@ -6,6 +6,10 @@
 Transform with a custom CRS definition expressed in XML.
 
 ## Request
+
+### Example: Geographic input into custom CRS
+Use lon/lat when the upstream CRS is geographic.
+
 ```http
 POST /api/transform/custom
 Content-Type: application/json
@@ -16,6 +20,22 @@ Content-Type: application/json
   "custom_definition_xml": "<CD_GEO_SYSTEM ...>",
   "source_crs": "EPSG:4326",
   "position": {"lon": 2.2945, "lat": 48.8584}
+}
+```
+
+### Example: Projected input into custom CRS
+Provide `x`/`y` when the source CRS is projected (for example, a grid defined in the XML snippet).
+
+```http
+POST /api/transform/custom
+Content-Type: application/json
+```
+
+```json
+{
+  "custom_definition_xml": "<CD_GEO_SYSTEM ...>",
+  "source_crs": "EPSG:23031",
+  "position": {"x": 448249.35, "y": 5411932.67}
 }
 ```
 
