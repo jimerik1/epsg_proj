@@ -1,13 +1,17 @@
 # CRS Parameters
 
-**Method**: `GET`  \n**URL**: `/api/crs/parameters`
+**Method**: `GET`
+**URL**: `/api/crs/parameters`
 
 Return key projection parameters (method, standard parallels, etc.).
 
 ## Request
+```http
 GET /api/crs/parameters?code=EPSG:23031
+```
 
 ## Response
+```json
 {
   "method": "Transverse Mercator",
   "parameters": {
@@ -17,3 +21,4 @@ GET /api/crs/parameters?code=EPSG:23031
     "central_meridian": {"value": 3.0, "unit": "degree"}
   }
 }
+```

@@ -1,18 +1,26 @@
 # Transform Local Offset
 
-**Method**: `POST`  \n**URL**: `/api/transform/local-offset`
+**Method**: `POST`
+**URL**: `/api/transform/local-offset`
 
 Convert a true-distance local offset (ENU) using the ECEF pipeline and scale-factor approximation.
 
 ## Request
+```http
 POST /api/transform/local-offset
+Content-Type: application/json
+```
+
+```json
 {
   "crs": "EPSG:32040",
   "reference": {"lon": -99.2053, "lat": 29.3513, "height": 0},
   "offset": {"east": 10, "north": 10, "up": 0}
 }
+```
 
 ## Response
+```json
 {
   "reference": {
     "geodetic": {"lon": -99.2053, "lat": 29.3513},
@@ -33,3 +41,4 @@ POST /api/transform/local-offset
     "d_m": 0.0248
   }
 }
+```

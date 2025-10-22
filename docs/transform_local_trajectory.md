@@ -1,11 +1,17 @@
 # Transform Local Trajectory
 
-**Method**: `POST`  \n**URL**: `/api/transform/local-trajectory`
+**Method**: `POST`
+**URL**: `/api/transform/local-trajectory`
 
 Apply the ECEF and/or scale-factor pipeline to an entire trajectory expressed in true ENU offsets.
 
 ## Request
+```http
 POST /api/transform/local-trajectory
+Content-Type: application/json
+```
+
+```json
 {
   "crs": "EPSG:32040",
   "reference": {"lon": -99.2053, "lat": 29.3513, "height": 0},
@@ -15,8 +21,10 @@ POST /api/transform/local-trajectory
   ],
   "mode": "both"
 }
+```
 
 ## Response
+```json
 {
   "points": [
     {
@@ -32,3 +40,4 @@ POST /api/transform/local-trajectory
     }
   ]
 }
+```

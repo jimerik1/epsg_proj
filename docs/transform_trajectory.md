@@ -1,11 +1,17 @@
 # Transform Trajectory
 
-**Method**: `POST`  \n**URL**: `/api/transform/trajectory`
+**Method**: `POST`
+**URL**: `/api/transform/trajectory`
 
 Batch transformation of trajectory points from CRS A to CRS B.
 
 ## Request
+```http
 POST /api/transform/trajectory
+Content-Type: application/json
+```
+
+```json
 {
   "source_crs": "EPSG:4326",
   "target_crs": "EPSG:32631",
@@ -14,8 +20,10 @@ POST /api/transform/trajectory
     {"id": "P2", "x": 2.2955, "y": 48.8589}
   ]
 }
+```
 
 ## Response
+```json
 {
   "transformed_trajectory": [
     {"id": "P1", "x": 448249.35, "y": 5411932.67, "z": null},
@@ -27,3 +35,4 @@ POST /api/transform/trajectory
   },
   "transformation_accuracy": 0.15
 }
+```

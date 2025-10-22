@@ -1,13 +1,17 @@
 # CRS Units
 
-**Method**: `GET`  \n**URL**: `/api/crs/units/{epsg_code}`
+**Method**: `GET`
+**URL**: `/api/crs/units/{epsg_code}`
 
 Return axis units and conversion factors for a CRS.
 
 ## Request
+```http
 GET /api/crs/units/EPSG:32631
+```
 
 ## Response
+```json
 {
   "epsg_code": "EPSG:32631",
   "units": {
@@ -15,3 +19,4 @@ GET /api/crs/units/EPSG:32631
     "horizontal_factor": 1.0
   }
 }
+```
