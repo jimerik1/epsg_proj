@@ -27,6 +27,27 @@ async def crs_info(code: str):
             "area_of_use": getattr(crs.area_of_use, "name", None),
         }
 
+        try:
+            geodetic = getattr(crs, "geodetic_crs", None)
+        except Exception:
+            geodetic = None
+        if geodetic is None and crs.is_geographic:
+            geodetic = crs
+        geodetic_code = None
+        geodetic_name = None
+        if geodetic is not None:
+            geodetic_name = getattr(geodetic, "name", None)
+            try:
+                auth_name, auth_code = geodetic.to_authority() or (None, None)
+                if auth_name and auth_code:
+                    geodetic_code = f"{auth_name}:{auth_code}"
+            except Exception:
+                geodetic_code = None
+        info["geodetic_crs"] = {
+            "code": geodetic_code,
+            "name": geodetic_name,
+        }
+
         # Datum and geodetic
         datum_name = None
         try:

@@ -77,3 +77,23 @@ export async function matchCustomCRS(xml) {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+
+export async function computeLocalOffset(payload) {
+  const res = await fetch(`${API_URL}/api/transform/local-offset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function computeLocalTrajectory(payload) {
+  const res = await fetch(`${API_URL}/api/transform/local-trajectory`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

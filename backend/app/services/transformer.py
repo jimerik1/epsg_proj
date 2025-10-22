@@ -1,5 +1,7 @@
 from typing import List, Dict, Optional, Tuple
 
+import math
+
 import numpy as np
 from pyproj import CRS, Transformer, Proj
 from pyproj.transformer import TransformerGroup
@@ -124,3 +126,144 @@ class TransformationService:
                 units["vertical"] = axis.unit_name
                 units["vertical_factor"] = axis.unit_conversion_factor
         return units
+
+    def _get_geodetic_crs(self, crs: CRS) -> CRS:
+        try:
+            geo = crs.geodetic_crs
+        except Exception:
+            geo = None
+        if geo is None:
+            return crs
+        return geo
+
+    def _ensure_3d(self, crs: CRS) -> CRS:
+        try:
+            if hasattr(crs, "is_geocentric") and crs.is_geocentric:
+                return crs
+        except Exception:
+            pass
+        try:
+            return crs.to_3d()
+        except Exception:
+            return crs
+
+    def _create_local_offset_context(
+        self,
+        crs_code: str,
+        lon: float,
+        lat: float,
+        height: float,
+    ) -> Dict:
+        target_crs = CRS.from_string(crs_code)
+        geodetic = self._get_geodetic_crs(target_crs)
+        geodetic3d = self._ensure_3d(geodetic)
+
+        ecef = CRS.from_epsg(4978)
+        geo_to_ecef = Transformer.from_crs(geodetic3d, ecef, always_xy=True)
+        ecef_to_geo = Transformer.from_crs(ecef, geodetic3d, always_xy=True)
+        geo_to_target = Transformer.from_crs(geodetic3d, target_crs, always_xy=True)
+
+        try:
+            geo_to_wgs = Transformer.from_crs(geodetic3d, CRS.from_epsg(4979), always_xy=True)
+        except Exception:
+            geo_to_wgs = None
+
+        origin_ecef = geo_to_ecef.transform(lon, lat, height)
+        lon_rad = math.radians(lon)
+        lat_rad = math.radians(lat)
+
+        context = {
+            "crs": target_crs,
+            "geodetic": geodetic3d,
+            "geo_to_ecef": geo_to_ecef,
+            "ecef_to_geo": ecef_to_geo,
+            "geo_to_target": geo_to_target,
+            "geo_to_wgs": geo_to_wgs,
+            "origin_ecef": origin_ecef,
+            "sin_lon": math.sin(lon_rad),
+            "cos_lon": math.cos(lon_rad),
+            "sin_lat": math.sin(lat_rad),
+            "cos_lat": math.cos(lat_rad),
+            "origin_height": height,
+        }
+        return context
+
+    def build_local_offset_context(
+        self,
+        crs_code: str,
+        lon: float,
+        lat: float,
+        height: float,
+    ) -> Dict:
+        return self._create_local_offset_context(crs_code, lon, lat, height)
+
+    def local_offset_via_ecef(
+        self,
+        crs_code: str,
+        lon: float,
+        lat: float,
+        height: float,
+        east: float,
+        north: float,
+        up: float,
+        context: Optional[Dict] = None,
+    ) -> Dict:
+        ctx = context or self._create_local_offset_context(crs_code, lon, lat, height)
+
+        sin_lon = ctx["sin_lon"]
+        cos_lon = ctx["cos_lon"]
+        sin_lat = ctx["sin_lat"]
+        cos_lat = ctx["cos_lat"]
+
+        delta_x = -sin_lon * east - sin_lat * cos_lon * north + cos_lat * cos_lon * up
+        delta_y = cos_lon * east - sin_lat * sin_lon * north + cos_lat * sin_lon * up
+        delta_z = cos_lat * north + sin_lat * up
+
+        new_ecef = (
+            ctx["origin_ecef"][0] + delta_x,
+            ctx["origin_ecef"][1] + delta_y,
+            ctx["origin_ecef"][2] + delta_z,
+        )
+
+        lon_new, lat_new, h_new = ctx["ecef_to_geo"].transform(*new_ecef)
+        proj = ctx["geo_to_target"].transform(lon_new, lat_new, h_new)
+
+        result = {
+            "geodetic": {"lon": lon_new, "lat": lat_new, "height": h_new},
+            "projected": {"x": proj[0], "y": proj[1]},
+        }
+
+        geo_to_wgs = ctx.get("geo_to_wgs")
+        if geo_to_wgs is not None:
+            try:
+                wgs = geo_to_wgs.transform(lon_new, lat_new, h_new)
+                result["wgs84"] = {"lon": wgs[0], "lat": wgs[1], "height": wgs[2]}
+            except Exception:
+                pass
+
+        return result
+
+    def local_offset_via_ecef_bulk(
+        self,
+        crs_code: str,
+        lon: float,
+        lat: float,
+        height: float,
+        offsets: List[Tuple[float, float, float]],
+    ) -> List[Dict]:
+        ctx = self._create_local_offset_context(crs_code, lon, lat, height)
+        results = []
+        for east, north, up in offsets:
+            results.append(
+                self.local_offset_via_ecef(
+                    crs_code,
+                    lon,
+                    lat,
+                    height,
+                    east,
+                    north,
+                    up,
+                    context=ctx,
+                )
+            )
+        return results

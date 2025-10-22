@@ -1,7 +1,9 @@
+import math
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional, Dict
-from pyproj import CRS
+from typing import List, Optional, Dict, Literal
+from pyproj import CRS, Transformer, Geod
 
 from app.services.transformer import TransformationService
 from app.services.crs_parser import CustomCRSParser
@@ -33,6 +35,41 @@ class CustomTransformRequest(BaseModel):
     source_crs: str
     position: Dict[str, float]
     vertical_value: Optional[float] = None
+
+
+class ReferencePosition(BaseModel):
+    lon: Optional[float] = None
+    lat: Optional[float] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+    height: Optional[float] = 0.0
+
+
+class OffsetVector(BaseModel):
+    east: float
+    north: float
+    up: Optional[float] = 0.0
+
+
+class LocalOffsetRequest(BaseModel):
+    crs: str
+    reference: ReferencePosition
+    offset: OffsetVector
+
+
+class TrajectoryPoint(BaseModel):
+    md: Optional[float] = None
+    tvd: float
+    east: float
+    north: float
+    name: Optional[str] = None
+
+
+class LocalTrajectoryRequest(BaseModel):
+    crs: str
+    reference: ReferencePosition
+    points: List[TrajectoryPoint]
+    mode: Literal['ecef', 'scale', 'both'] = 'both'
 
 
 @router.post("/direct")
@@ -191,3 +228,310 @@ async def transform_custom(request: CustomTransformRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+@router.post("/local-offset")
+async def transform_local_offset(request: LocalOffsetRequest):
+    try:
+        service = TransformationService()
+        crs = CRS.from_string(request.crs)
+        geodetic = getattr(crs, "geodetic_crs", None) or crs
+        geodetic3d = geodetic
+        try:
+            geodetic3d = geodetic.to_3d()
+        except Exception:
+            pass
+
+        ref_lon = request.reference.lon
+        ref_lat = request.reference.lat
+        ref_h = request.reference.height or 0.0
+
+        transformer_proj_to_geo = Transformer.from_crs(crs, geodetic3d, always_xy=True)
+
+        if ref_lon is None or ref_lat is None:
+            if request.reference.x is None or request.reference.y is None:
+                raise HTTPException(status_code=400, detail="Reference must include lon/lat or x/y")
+            ref_lon, ref_lat, ref_h = transformer_proj_to_geo.transform(
+                request.reference.x,
+                request.reference.y,
+                ref_h,
+            )
+
+        context = service.build_local_offset_context(request.crs, ref_lon, ref_lat, ref_h)
+        units_info = service._get_units(crs)
+        horizontal_factor = units_info.get("horizontal_factor") or 1.0
+        meter_to_axis = 1.0 / horizontal_factor if horizontal_factor else 1.0
+
+        if request.reference.x is not None and request.reference.y is not None:
+            base_projected = {"x": request.reference.x, "y": request.reference.y}
+        else:
+            proj_coords = context["geo_to_target"].transform(ref_lon, ref_lat, ref_h)
+            base_projected = {"x": proj_coords[0], "y": proj_coords[1]}
+
+        precise = service.local_offset_via_ecef(
+            request.crs,
+            ref_lon,
+            ref_lat,
+            ref_h,
+            request.offset.east,
+            request.offset.north,
+            request.offset.up or 0.0,
+            context=context,
+        )
+
+        scales = None
+        scale_result = None
+        try:
+            scales = service.calculate_scale_factor(request.crs, ref_lon, ref_lat)
+            meridional = scales.get("meridional_scale")
+            parallel = scales.get("parallel_scale")
+            if meridional is not None and parallel is not None:
+                grid_east_m = request.offset.east * parallel
+                grid_north_m = request.offset.north * meridional
+                dx = grid_east_m * meter_to_axis
+                dy = grid_north_m * meter_to_axis
+                new_x = base_projected["x"] + dx
+                new_y = base_projected["y"] + dy
+                lon_scale, lat_scale, h_scale = transformer_proj_to_geo.transform(
+                    new_x,
+                    new_y,
+                    ref_h + (request.offset.up or 0.0),
+                )
+                geo_to_wgs = context.get("geo_to_wgs") or Transformer.from_crs(geodetic3d, CRS.from_epsg(4979), always_xy=True)
+                scale_wgs = geo_to_wgs.transform(lon_scale, lat_scale, h_scale)
+                scale_result = {
+                    "projected": {"x": new_x, "y": new_y},
+                    "geodetic": {"lon": lon_scale, "lat": lat_scale, "height": h_scale},
+                    "wgs84": {"lon": scale_wgs[0], "lat": scale_wgs[1], "height": scale_wgs[2]},
+                    "scales": scales,
+                    "projected_units": {
+                        "unit": units_info.get("horizontal"),
+                        "meter_per_unit": horizontal_factor,
+                    },
+                }
+        except Exception:
+            scale_result = None
+
+        precise_wgs = precise.get("wgs84")
+        if precise_wgs is None:
+            geo_to_wgs = context.get("geo_to_wgs") or Transformer.from_crs(geodetic3d, CRS.from_epsg(4979), always_xy=True)
+            try:
+                wgs = geo_to_wgs.transform(
+                    precise["geodetic"]["lon"],
+                    precise["geodetic"]["lat"],
+                    precise["geodetic"].get("height", ref_h),
+                )
+                precise["wgs84"] = {"lon": wgs[0], "lat": wgs[1], "height": wgs[2]}
+            except Exception:
+                pass
+
+        geo_to_wgs = context.get("geo_to_wgs") or Transformer.from_crs(geodetic3d, CRS.from_epsg(4979), always_xy=True)
+        reference_wgs = geo_to_wgs.transform(ref_lon, ref_lat, ref_h)
+
+        difference = None
+        if precise and scale_result:
+            dx_axis = precise["projected"]["x"] - scale_result["projected"]["x"]
+            dy_axis = precise["projected"]["y"] - scale_result["projected"]["y"]
+            difference = {
+                "dx_axis": dx_axis,
+                "dy_axis": dy_axis,
+                "d_axis": math.hypot(dx_axis, dy_axis),
+                "dx_m": dx_axis * horizontal_factor,
+                "dy_m": dy_axis * horizontal_factor,
+                "d_m": math.hypot(dx_axis * horizontal_factor, dy_axis * horizontal_factor),
+                "unit": units_info.get("horizontal"),
+                "meter_per_unit": horizontal_factor,
+            }
+
+        return {
+            "crs": request.crs,
+            "reference": {
+                "geodetic": {"lon": ref_lon, "lat": ref_lat, "height": ref_h},
+                "projected": base_projected,
+                "wgs84": {"lon": reference_wgs[0], "lat": reference_wgs[1], "height": reference_wgs[2]},
+                "projected_units": {
+                    "unit": units_info.get("horizontal"),
+                    "meter_per_unit": horizontal_factor,
+                },
+            },
+            "offset": {
+                "east": request.offset.east,
+                "north": request.offset.north,
+                "up": request.offset.up or 0.0,
+            },
+            "ecef_pipeline": precise,
+            "scale_factor": scale_result,
+            "difference": difference,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/local-trajectory")
+async def transform_local_trajectory(request: LocalTrajectoryRequest):
+    if not request.points:
+        raise HTTPException(status_code=400, detail="Trajectory points list cannot be empty")
+
+    try:
+        service = TransformationService()
+        crs = CRS.from_string(request.crs)
+        geodetic = getattr(crs, "geodetic_crs", None) or crs
+        geodetic3d = geodetic
+        try:
+            geodetic3d = geodetic.to_3d()
+        except Exception:
+            pass
+
+        ref_lon = request.reference.lon
+        ref_lat = request.reference.lat
+        ref_h = request.reference.height or 0.0
+
+        transformer_proj_to_geo = Transformer.from_crs(crs, geodetic3d, always_xy=True)
+
+        if ref_lon is None or ref_lat is None:
+            if request.reference.x is None or request.reference.y is None:
+                raise HTTPException(status_code=400, detail="Reference must include lon/lat or x/y")
+            ref_lon, ref_lat, ref_h = transformer_proj_to_geo.transform(
+                request.reference.x,
+                request.reference.y,
+                ref_h,
+            )
+
+        context = service.build_local_offset_context(request.crs, ref_lon, ref_lat, ref_h)
+        geo_to_target = context["geo_to_target"]
+        geo_to_wgs = context.get("geo_to_wgs") or Transformer.from_crs(geodetic3d, CRS.from_epsg(4979), always_xy=True)
+        units_info = service._get_units(crs)
+        horizontal_factor = units_info.get("horizontal_factor") or 1.0
+        meter_to_axis = 1.0 / horizontal_factor if horizontal_factor else 1.0
+
+        if request.reference.x is not None and request.reference.y is not None:
+            base_projected = {"x": request.reference.x, "y": request.reference.y}
+        else:
+            proj_coords = geo_to_target.transform(ref_lon, ref_lat, ref_h)
+            base_projected = {"x": proj_coords[0], "y": proj_coords[1]}
+
+        mode = request.mode
+        include_ecef = mode in ("ecef", "both")
+        include_scale = mode in ("scale", "both")
+
+        scales = None
+        if include_scale and crs.is_projected:
+            try:
+                scales = service.calculate_scale_factor(request.crs, ref_lon, ref_lat)
+            except Exception:
+                scales = None
+
+        geod = Geod(ellps='WGS84')
+
+        points_out: List[Dict] = []
+        for idx, pt in enumerate(request.points):
+            up = -(pt.tvd or 0.0)
+            entry: Dict[str, Dict] = {
+                "index": idx,
+                "name": pt.name,
+                "md": pt.md,
+                "tvd": pt.tvd,
+                "offset": {
+                    "east": pt.east,
+                    "north": pt.north,
+                    "up": up,
+                },
+            }
+
+            ecef_res = None
+            if include_ecef:
+                ecef_res = service.local_offset_via_ecef(
+                    request.crs,
+                    ref_lon,
+                    ref_lat,
+                    ref_h,
+                    pt.east,
+                    pt.north,
+                    up,
+                    context=context,
+                )
+                entry["ecef"] = ecef_res
+
+            scale_res = None
+            if include_scale and scales is not None:
+                meridional = scales.get("meridional_scale")
+                parallel = scales.get("parallel_scale")
+                if meridional is not None and parallel is not None:
+                    grid_east_m = pt.east * parallel
+                    grid_north_m = pt.north * meridional
+                    dx = grid_east_m * meter_to_axis
+                    dy = grid_north_m * meter_to_axis
+                    new_x = base_projected["x"] + dx
+                    new_y = base_projected["y"] + dy
+                    lon_scale, lat_scale, h_scale = transformer_proj_to_geo.transform(
+                        new_x,
+                        new_y,
+                        ref_h + up,
+                    )
+                    wgs_scale = geo_to_wgs.transform(lon_scale, lat_scale, h_scale)
+                    scale_res = {
+                        "projected": {"x": new_x, "y": new_y},
+                        "geodetic": {"lon": lon_scale, "lat": lat_scale, "height": h_scale},
+                        "wgs84": {"lon": wgs_scale[0], "lat": wgs_scale[1], "height": wgs_scale[2]},
+                        "scales": scales,
+                        "projected_units": {
+                            "unit": units_info.get("horizontal"),
+                            "meter_per_unit": horizontal_factor,
+                        },
+                    }
+                    entry["scale"] = scale_res
+
+            if include_ecef and include_scale and ecef_res and scale_res:
+                proj_diff = None
+                if ecef_res.get("projected") and scale_res.get("projected"):
+                    dx_axis = ecef_res["projected"]["x"] - scale_res["projected"]["x"]
+                    dy_axis = ecef_res["projected"]["y"] - scale_res["projected"]["y"]
+                    proj_diff = {
+                        "dx_axis": dx_axis,
+                        "dy_axis": dy_axis,
+                        "d_axis": math.hypot(dx_axis, dy_axis),
+                        "dx_m": dx_axis * horizontal_factor,
+                        "dy_m": dy_axis * horizontal_factor,
+                        "d_m": math.hypot(dx_axis * horizontal_factor, dy_axis * horizontal_factor),
+                        "unit": units_info.get("horizontal"),
+                        "meter_per_unit": horizontal_factor,
+                    }
+                geod_diff = None
+                ecef_wgs = ecef_res.get("wgs84")
+                scale_wgs = scale_res.get("wgs84")
+                if ecef_wgs and scale_wgs:
+                    _, _, dist = geod.inv(
+                        ecef_wgs["lon"],
+                        ecef_wgs["lat"],
+                        scale_wgs["lon"],
+                        scale_wgs["lat"],
+                    )
+                    geod_diff = {"distance": abs(dist)}
+                entry["difference"] = {
+                    "projected": proj_diff,
+                    "geodesic": geod_diff,
+                }
+
+            points_out.append(entry)
+
+        reference_wgs = geo_to_wgs.transform(ref_lon, ref_lat, ref_h)
+
+        return {
+            "crs": request.crs,
+            "mode": mode,
+            "reference": {
+                "geodetic": {"lon": ref_lon, "lat": ref_lat, "height": ref_h},
+                "projected": base_projected,
+                "wgs84": {"lon": reference_wgs[0], "lat": reference_wgs[1], "height": reference_wgs[2]},
+                "projected_units": {
+                    "unit": units_info.get("horizontal"),
+                    "meter_per_unit": horizontal_factor,
+                },
+            },
+            "points": points_out,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
