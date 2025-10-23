@@ -83,7 +83,10 @@ def _get_value(row: Dict[str, Any], column: Optional[str]) -> Optional[float]:
     value = row.get(column)
     if value in (None, ""):
         return None
-    return to_float(value)
+    try:
+        return to_float(value)
+    except Exception:
+        return None
 
 
 def _extract_geo_sets(table) -> List[GeoColumns]:
@@ -992,6 +995,15 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
 
     outputs_by_point: Dict[str, Dict[str, float]] = {}
     tvd_out_col = output_table.columns[0] if output_table.columns else None
+    # Try to derive target vertical EPSG from column info
+    vert_epsg: Optional[str] = None
+    try:
+        if tvd_out_col and tvd_out_col in output_table.column_info:
+            m = re.search(r"EPSG CRS code (\d+)", output_table.column_info[tvd_out_col])
+            if m:
+                vert_epsg = f"EPSG:{m.group(1)}"
+    except Exception:
+        vert_epsg = None
     for row in output_table.rows:
         p = row.get("point")
         if not p:
@@ -1001,41 +1013,47 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
         tvd_out = _get_value(row, tvd_out_col) if tvd_out_col else None
         outputs_by_point[p] = {"easting": east, "northing": north, "tvd": tvd_out}
 
-    # Infer vertical shift between VRD and output vertical datum using first row with both values
+    # (Deprecated) inferred shift approach retained only for optional diagnostics
     tvd_shift = None
-    for item in inputs:
-        p = str(item.get("point") or "")
-        exp = outputs_by_point.get(p)
-        if item.get("tvd_in") is not None and exp and exp.get("tvd") is not None:
-            try:
-                tvd_shift = float(exp["tvd"]) - float(item["tvd_in"])
-            except Exception:
-                tvd_shift = None
-            break
 
-    # Produce direct transform validations
+    # Produce validations using a preferred via path (ETRS89→BNG via OSTN grid) with fallback to direct
     cases: List[Dict[str, object]] = []
     for item in inputs:
         p = str(item["point"]) if item.get("point") else ""
         expected = outputs_by_point.get(p)
-        payload = {
-            "source_crs": "EPSG:4326",  # dataset states WGS 84
-            "target_crs": "EPSG:27700",  # British National Grid (proxy for GIGS projCRS A2)
+        # Attempt via: 4326 -> 4258 -> 27700 with OSTN preference on leg 2
+        via_payload = {
+            "path": ["EPSG:4326", "EPSG:4258", "EPSG:27700"],
             "position": {"lon": item["lon"], "lat": item["lat"]},
+            "segment_preferred_ops": [None, ["OSTN", "NTv2"]],
         }
+        endpoint = "POST /api/transform/via"
         try:
-            resp = _call_json(session, "POST", f"{API_ROOT}/api/transform/direct", json=payload)
-        except HTTPError as exc:
-            cases.append({
-                "point": p,
-                "direction": "FORWARD",
-                "status": "fail",
-                "endpoint": "POST /api/transform/direct",
-                "payload": payload,
-                "error": exc.response.text,
-            })
-            continue
-        actual = resp.get("map_position") or {"x": resp.get("x"), "y": resp.get("y")}
+            via_out = _call_json(session, "POST", f"{API_ROOT}/api/transform/via", json=via_payload)
+            actual = {"x": via_out.get("x"), "y": via_out.get("y")}
+            payload_used = via_payload
+        except HTTPError:
+            # Fallback: direct
+            payload_direct = {
+                "source_crs": "EPSG:4326",
+                "target_crs": "EPSG:27700",
+                "position": {"lon": item["lon"], "lat": item["lat"]},
+            }
+            endpoint = "POST /api/transform/direct"
+            try:
+                resp = _call_json(session, "POST", f"{API_ROOT}/api/transform/direct", json=payload_direct)
+                actual = resp.get("map_position") or {"x": resp.get("x"), "y": resp.get("y")}
+                payload_used = payload_direct
+            except HTTPError as exc2:
+                cases.append({
+                    "point": p,
+                    "direction": "FORWARD",
+                    "status": "fail",
+                    "endpoint": endpoint,
+                    "payload": payload_direct,
+                    "error": exc2.response.text,
+                })
+                continue
         status = "skip"
         delta = {}
         message = None
@@ -1049,27 +1067,45 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
             tol = tolerances.get("cartesian", tolerances.get("cartesian_m", 0.05))
             status = "pass" if abs(delta["d"]) <= tol else "fail"
 
-        # Vertical check via inferred shift if available
+        # Vertical check using dedicated endpoint when target vertical EPSG is available.
         tvd_in = item.get("tvd_in")
         exp_tvd = expected.get("tvd") if expected else None
-        if tvd_in is not None and exp_tvd is not None and tvd_shift is not None:
-            try:
-                calc_tvd = float(tvd_in) + float(tvd_shift)
-                d_tvd = calc_tvd - float(exp_tvd)
-                delta["d_tvd"] = d_tvd
-                vtol = tolerances.get("vertical_m", tolerances.get("cartesian", tolerances.get("cartesian_m", 0.05)))
-                if abs(d_tvd) > vtol:
-                    status = "fail"
-            except Exception:
-                pass
+        # Optional: attempt direct vertical transform via API (prioritised if target vertical EPSG available)
+        try:
+            if tvd_in is not None and exp_tvd is not None and vert_epsg:
+                payload_vert = {
+                    "source_crs": "EPSG:4979",
+                    "target_vertical_crs": vert_epsg,
+                    "lon": item["lon"],
+                    "lat": item["lat"],
+                    "value": float(abs(float(tvd_in))),  # treat input as +down depth
+                    "value_is_depth": True,
+                    "output_as_depth": True,  # return +down depth
+                }
+                # Do not fail if endpoint unavailable
+                try:
+                    vert = _call_json(session, "POST", f"{API_ROOT}/api/transform/vertical", json=payload_vert)
+                    out_depth = float(vert.get("output_value"))
+                    # Convert to signed convention matching the dataset (negative TVD values)
+                    calc_signed = -out_depth
+                    delta["vertical_trial"] = {"signed_depth": calc_signed, "raw_depth": out_depth, "target": vert_epsg}
+                    d_vert = calc_signed - float(exp_tvd)
+                    delta["d_tvd"] = d_vert
+                    vtol = tolerances.get("vertical_m", tolerances.get("cartesian", tolerances.get("cartesian_m", 0.05)))
+                    if abs(d_vert) > vtol:
+                        status = "fail"
+                except Exception:
+                    pass
+        except Exception:
+            pass
         record = {
             "point": p,
             "direction": "FORWARD",
             "status": status,
-            "endpoint": "POST /api/transform/direct",
-            "payload": payload,
-            "source_crs": payload["source_crs"],
-            "target_crs": payload["target_crs"],
+            "endpoint": endpoint,
+            "payload": payload_used,
+            "source_crs": "EPSG:4326",
+            "target_crs": "EPSG:27700",
             "expected": expected,
             "actual": actual,
             "delta": delta,

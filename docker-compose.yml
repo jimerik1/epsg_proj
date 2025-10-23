@@ -7,6 +7,9 @@ services:
       - "3001:3001"
     environment:
       - PROJ_NETWORK=ON
+      - PROJ_DATA=/app/proj_data
+      - PROJ_LIB=/app/proj_data
+      - PROJ_USER_WRITABLE_DIRECTORY=/app/proj_data
       - PYTHONUNBUFFERED=1
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -14,6 +17,7 @@ services:
     volumes:
       - ./backend:/app
       - proj-data:/app/proj_data
+      - .:/workspace
       - ./tests/gigs:/app/gigs_reports:ro
     depends_on:
       - redis

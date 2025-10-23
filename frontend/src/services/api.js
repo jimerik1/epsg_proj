@@ -137,3 +137,13 @@ export async function runGigsTests() {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+
+export async function prefetchGrids(names) {
+  const res = await fetch(`${API_URL}/api/transform/prefetch-grids`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ names }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

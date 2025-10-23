@@ -267,38 +267,44 @@ export default function ViaTransformPage() {
       </div>
 
       <div className="flex flex-col gap-4">
-        {legs.map((l, idx) => (
-          <div key={`${l.from}->${l.to}`} className="card">
-            <div className="card-header">Leg {idx + 1}: {l.from} → {l.to}</div>
-            {l.paths?.length ? (
-              <ul className="card-body space-y-2">
-                {l.paths.map(p => (
-                  <li key={p.path_id} className="flex items-start gap-2">
-                    <label className="flex items-start gap-2">
-                      <input type="radio" name={`leg_${idx}`} value={p.path_id}
-                        checked={l.selected === p.path_id}
-                        onChange={() => {
-                          const copy = legs.slice();
-                          copy[idx] = { ...copy[idx], selected: p.path_id };
-                          setLegs(copy);
-                        }} />
-                      <span>
-                        <span className="font-medium">{p.description}</span>
-                        <span className="ml-2 text-sm text-gray-600">(acc: {fmtAcc(p)})</span>
-                        {fmtOps(p) && (
-                          <div className="text-xs text-gray-500 mt-1">methods: {fmtOps(p)}</div>
-                        )}
-                      </span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            ) : <div className="card-body text-sm text-gray-500">No paths listed yet.</div>}
-            <div className="card-body pt-0">
-              <button className="btn" onClick={() => quickDirect(idx + 1)} disabled={busy || l.selected == null}>Test Leg {idx + 1} Direct</button>
+        {legs.map((l, idx) => {
+          const selected = (l.paths || []).find(p => p.path_id === l.selected);
+          return (
+            <div key={`${l.from}->${l.to}`} className="card">
+              <div className="card-header">Leg {idx + 1}: {l.from} → {l.to}</div>
+              <div className="card-body space-y-2">
+                {l.paths?.length ? (
+                  <label className="label">Choose pipeline
+                    <select className="input w-full" value={l.selected ?? ''} onChange={e => {
+                      const val = e.target.value === '' ? null : Number(e.target.value);
+                      const copy = legs.slice();
+                      copy[idx] = { ...copy[idx], selected: val };
+                      setLegs(copy);
+                    }}>
+                      {l.paths.map(p => (
+                        <option key={p.path_id} value={p.path_id}>
+                          #{p.path_id} | {p.description} | acc: {fmtAcc(p)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : <div className="text-sm text-gray-500">No paths listed yet.</div>}
+
+                {selected && (
+                  <div className="text-sm">
+                    <div><span className="font-semibold">Selected:</span> {selected.description}</div>
+                    <div className="text-gray-600">accuracy: {fmtAcc(selected)}</div>
+                    {fmtOps(selected) && (
+                      <div className="text-xs text-gray-500">methods: {fmtOps(selected)}</div>
+                    )}
+                  </div>
+                )}
+
+                <button className="btn" onClick={() => quickDirect(idx + 1)} disabled={busy || l.selected == null}>Test Leg {idx + 1} Direct</button>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="text-sm text-gray-700">Selected route cumulative accuracy: <span className="font-medium">{selectedCumulativeAccuracy == null ? 'unknown' : `${fmtNumber(selectedCumulativeAccuracy)} m`}</span></div>
@@ -322,19 +328,7 @@ export default function ViaTransformPage() {
         </div>
       )}
 
-      {routeOptions.length > 0 && (
-        <div className="card">
-          <div className="card-header">Route Options (source → via → target)</div>
-          <ol className="card-body list-decimal ml-6 space-y-1">
-            {routeOptions.map((opt, idx) => (
-              <li key={`${opt.leg1.path_id}-${opt.leg2.path_id}`}>
-                {opt.label} → cumulative: {opt.cumulativeAccuracy == null ? 'unknown' : `${fmtNumber(opt.cumulativeAccuracy)} m`}
-                {idx === 0 ? '  ← best' : ''}
-              </li>
-            ))}
-          </ol>
-        </div>
-      )}
+      {/* Route options list removed (details shown in leg cards) */}
 
       <div>
         <button className="btn btn-primary" onClick={run} disabled={busy || !legs.length || legs.some(l => l.selected == null)}>

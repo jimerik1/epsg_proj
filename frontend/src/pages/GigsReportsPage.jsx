@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getGigsReport, getGigsReportHtmlUrl, runGigsTests } from '../services/api';
+import { getGigsReport, getGigsReportHtmlUrl, runGigsTests, prefetchGrids } from '../services/api';
 
 function StatusBadge({ status }) {
   const s = String(status || '').toLowerCase();
@@ -13,6 +13,7 @@ export default function GigsReportsPage() {
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [series, setSeries] = useState('all');
+  const [gridChecks, setGridChecks] = useState(null);
 
   const fetchReport = async () => {
     setLoading(true);
@@ -28,6 +29,49 @@ export default function GigsReportsPage() {
   };
 
   useEffect(() => { fetchReport(); }, []);
+
+  useEffect(() => {
+    const api = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+    (async () => {
+      try {
+        const urls = [
+          `${api}/api/transform/required-grids?source_crs=EPSG:4258&target_crs=EPSG:27700`,
+          `${api}/api/transform/required-grids?source_crs=EPSG:4326&target_crs=EPSG:27700`,
+        ];
+        const results = await Promise.all(urls.map(u => fetch(u).then(r => r.ok ? r.json() : null).catch(()=>null)));
+        setGridChecks(results);
+      } catch (e) {
+        setGridChecks(null);
+      }
+    })();
+  }, []);
+
+  const fetchMissingGrids = async () => {
+    if (!gridChecks) return;
+    const names = [];
+    for (const gc of gridChecks) {
+      if (!gc || !gc.paths) continue;
+      const first = gc.paths[0];
+      if (first && first.grids) {
+        first.grids.forEach(g => { if (!g.present) names.push(g.name); });
+      }
+    }
+    if (!names.length) return;
+    try {
+      await prefetchGrids(names);
+      // re-check
+      const api = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+      const urls = [
+        `${api}/api/transform/required-grids?source_crs=EPSG:4258&target_crs=EPSG:27700`,
+        `${api}/api/transform/required-grids?source_crs=EPSG:4326&target_crs=EPSG:27700`,
+      ];
+      const results = await Promise.all(urls.map(u => fetch(u).then(r => r.ok ? r.json() : null).catch(()=>null)));
+      setGridChecks(results);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('prefetchGrids error', e);
+    }
+  };
 
   const seriesSummaries = {
     all: 'All series combined. Use the tabs to view a specific test series.',
@@ -68,8 +112,33 @@ export default function GigsReportsPage() {
 
       {data && (
         <div className="card">
-          <div className="card-header">Summary</div>
+          <div className="card-header flex items-center justify-between">
+            <span>Summary</span>
+            <a className="btn" href="#docs" title="Open Docs → GIGS Report">Docs</a>
+          </div>
           <div className="card-body space-y-3 text-sm">
+            {gridChecks && (
+              <div className="border rounded p-2">
+                <div className="font-semibold mb-1">Grid checklist</div>
+                {gridChecks.map((gc, i) => (
+                  <div key={i} className="mb-1">
+                    <div className="text-gray-700">{gc ? `${gc.source_crs} → ${gc.target_crs}` : 'n/a'}</div>
+                    {gc && gc.paths && gc.paths.length > 0 ? (
+                      <ul className="ml-4 list-disc">
+                        {gc.paths.slice(0, 1).map(p => (
+                          <li key={p.path_id}>
+                            {p.description} — grids: {p.grids && p.grids.length ? p.grids.map(g => `${g.name} ${g.present ? '✓' : '✗'}`).join(', ') : 'none'}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="text-gray-500">No paths reported</div>
+                    )}
+                  </div>
+                ))}
+                <button className="btn" onClick={fetchMissingGrids}>Fetch missing grids</button>
+              </div>
+            )}
             <div className="flex gap-6"><div>Generated: <span className="font-medium">{data.generated}</span></div></div>
             <div className="flex flex-wrap items-center gap-2">
               {seriesOptions.map(s => (
@@ -124,13 +193,6 @@ export default function GigsReportsPage() {
         </div>
       )}
 
-      <div className="card">
-        <div className="card-header">Detailed HTML Report</div>
-        <div className="card-body">
-          <iframe title="GIGS HTML Report" src={htmlUrl} className="w-full h-[60vh] rounded border border-gray-200" />
-        </div>
-      </div>
-
       {data?._selected && (
         <TestDetailsModal test={data._selected} onClose={() => setData(d => ({...d, _selected: null}))} />)
       }
@@ -152,6 +214,8 @@ function TestDetailsModal({ test, onClose }) {
   const cases = Array.isArray(details?.cases) ? details.cases : [];
   const [caseFilter, setCaseFilter] = React.useState('all');
   const tolerances = details?.tolerances || {};
+  const tolCartesian = Number(tolerances.cartesian_m ?? tolerances.cartesian ?? NaN);
+  const tolGeo = Number(tolerances.geographic_deg ?? NaN);
   const points = React.useMemo(() => {
     const set = new Set();
     for (const c of cases) if (c.point) set.add(String(c.point));
@@ -213,13 +277,25 @@ function TestDetailsModal({ test, onClose }) {
           {tab === 'cases' && (
             <div className="space-y-3">
               {!visibleCases.length && <div className="text-sm text-gray-600">No case breakdown recorded.</div>}
-              {visibleCases.map((c, i) => (
+              {visibleCases.map((c, i) => {
+                const d = c.delta || {};
+                const dAxis = typeof d.d === 'number' ? d.d : NaN;
+                const dLon = typeof d.d_lon === 'number' ? d.d_lon : NaN;
+                const dLat = typeof d.d_lat === 'number' ? d.d_lat : NaN;
+                const dTvd = typeof d.d_tvd === 'number' ? d.d_tvd : NaN;
+                const overCartesian = Number.isFinite(tolCartesian) && Number.isFinite(dAxis) && Math.abs(dAxis) > tolCartesian;
+                const overGeo = Number.isFinite(tolGeo) && ((Number.isFinite(dLon) && Math.abs(dLon) > tolGeo) || (Number.isFinite(dLat) && Math.abs(dLat) > tolGeo));
+                const badge = (txt) => <span className="ml-2 inline-block px-2 py-0.5 text-xs rounded border bg-red-100 text-red-800 border-red-300">{txt}</span>;
+                return (
                 <div key={i} className="border rounded-md p-3">
                   <div className="flex items-center justify-between">
                     <div className="text-sm">
                       <span className="font-medium">Point</span>: {String(c.point || '')}
                       <span className="ml-3 font-medium">Direction</span>: {String(c.direction || '')}
                       <span className="ml-3"><StatusBadge status={c.status} /></span>
+                      {overCartesian && badge('Δ cartesian > tol')}
+                      {overGeo && badge('Δ geographic > tol')}
+                      {Number.isFinite(dTvd) && Number.isFinite(tolCartesian) && Math.abs(dTvd) > tolCartesian && badge('Δ TVD > tol')}
                     </div>
                     <button className="btn" onClick={() => openInVia(c)}>Open in Transform Via</button>
                   </div>
@@ -260,7 +336,7 @@ function TestDetailsModal({ test, onClose }) {
                     </div>
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
           )}
           {tab === 'raw' && (

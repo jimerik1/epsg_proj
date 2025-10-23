@@ -5,6 +5,8 @@ from app.api.crs import router as crs_router
 from app.api.calculate import router as calc_router
 from app.api.gigs import router as gigs_router
 from app.api.docs import router as docs_router
+from app.api.vertical import router as vertical_router
+from app.api.grids import router as grids_router
 
 app = FastAPI(title="CRS Transformation Platform")
 
@@ -21,6 +23,8 @@ app.include_router(crs_router)
 app.include_router(calc_router)
 app.include_router(gigs_router)
 app.include_router(docs_router)
+app.include_router(vertical_router)
+app.include_router(grids_router)
 
 @app.get("/")
 def root():

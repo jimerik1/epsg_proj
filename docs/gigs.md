@@ -11,6 +11,25 @@ This repository ships the IOGP GIGS v2.1 datasets under `docs/standards/GIGS_Tes
 
 Set `GIGS_REPORT_DIR` to change where the backend looks for artifacts (defaults to `tests/gigs`).
 
+### Grids
+
+Grid-based transformations (e.g., ETRS89→OSGB36 via OSTN15) require the corresponding grid files. The backend is configured to:
+
+- Enable `PROJ_NETWORK=ON` (fetch grids on demand when possible)
+- Use `/app/proj_data` (`PROJ_DATA`, `PROJ_LIB`, `PROJ_USER_WRITABLE_DIRECTORY`) for cache/storage
+
+You can inspect requirements via:
+
+- `GET /api/transform/required-grids?source_crs=EPSG:4258&target_crs=EPSG:27700`
+  - Response lists the paths, the grid names, and whether they are found in the current PROJ data directories.
+
+To vendor a grid (offline), place the file in `backend/proj_data/` and restart the backend.
+
+You can also use:
+
+- `backend/scripts/fetch_grids.sh` inside the backend container to pull common GB grids (OSTN15/OSGM15) into `/app/proj_data`.
+- `POST /api/transform/prefetch-grids` with `{ "names": ["uk_os_OSTN15_NTv2_OSGBtoETRS.gsb"] }` to ask the backend to use `projsync` to download specific grids.
+
 ## Viewing
 
 - Frontend: open the “GIGS Reports” tab. Features:
@@ -37,4 +56,3 @@ Discover operations via:
 - `GET /api/transform/available-paths` and `GET /api/transform/available-paths-via`
 
 Each entry includes `accuracy`, `accuracy_unit`, `description`, and `operations_info` (EPSG method/code when known).
-
