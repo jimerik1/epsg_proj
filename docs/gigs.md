@@ -30,6 +30,10 @@ You can also use:
 - `backend/scripts/fetch_grids.sh` inside the backend container to pull common GB grids (OSTN15/OSGM15) into `/app/proj_data`.
 - `POST /api/transform/prefetch-grids` with `{ "names": ["uk_os_OSTN15_NTv2_OSGBtoETRS.gsb"] }` to ask the backend to use `projsync` to download specific grids.
 
+### Bundled grids in the image
+
+The backend image prefetches key GB grids during build (can be disabled with `--build-arg GRID_FETCH=0`). The grids are stored under `/app/proj_data` and used by PROJ by default.
+
 ## Viewing
 
 - Frontend: open the “GIGS Reports” tab. Features:

@@ -14,37 +14,50 @@
   - README and `docs/gigs.md` describe the runner, reports, and path-selection features. Frontend “Docs” page embeds report and renders docs/readme.
 
 ## Test Coverage Snapshot
-- Pass: Series 5100, Series 5200 tests `tfm-5201`, `tfm-5204`, `tfm-5206`, `tfm-5208` align with GIGS reference values.
-- New: Series 5500 wells – initial validations for multiple datasets (horizontal via BNG proxy; inferred vertical validation when TVD available).
-- Skip (pending features): `tfm-5209`–`tfm-5212` require user-defined CRS/bin-grid; more complete vertical datum pipelines for wells.
-- Needs deterministic/backend capability:
-  - `tfm-5203` Position Vector (EPSG 1037) – select explicit Helmert PV pipeline and verify sign conventions.
-  - `tfm-5205` Molodensky‑Badekas – ensure pivot and rounding match EPSG; pin operation.
-  - `tfm-5207` NTv2 – ensure grids load and the chosen transformer uses them; document required grid set.
-  - `tfm-5213` Geo 2D three‑translation – prefer Abridged Molodensky or concatenated pipelines per dataset.
+- Series 5100 (conversions)
+  - Status: green for all currently wired datasets with dataset tolerances.
+  - Action: keep green; no special work beyond regression checks.
+- Series 5200 (transformations)
+  - Status: green for `tfm-5201` (Geog↔Geocen), `tfm-5204` (Coord Frame), `tfm-5206` (NADCON), `tfm-5208` (Longitude rotation).
+  - TODOs to green remaining tests:
+    - `tfm-5203` (Position Vector): pin explicit PV Helmert pipeline and test sign conventions.
+    - `tfm-5205` (Molodensky‑Badekas): ensure pivot point/rounding matches EPSG; pin operation.
+    - `tfm-5207` (NTv2): verify grids are present; choose grid-based path deterministically; document grid set.
+    - `tfm-5213` (Geo 2D three‑translation): select Abridged Molodensky/concatenated path per dataset.
+  - `tfm-5209`–`tfm-5212`: require bin-grid/user-defined CRS; schedule after above.
+- Series 5500 (wells)
+  - Status: significant improvement — horizontal via 4326→4258→27700 with OSTN15 preference; vertical via dedicated endpoint using dataset vertical EPSG; grids bundled in image; checklist shows presence.
+  - TODOs to green:
+    - Confirm vertical EPSG detection for all 55xx; add fallback mapping where headers omit codes.
+    - Ensure OSTN15/OSGM15 present (now bundled; keep checklist green); add any extra grids if datasets require them.
+    - Tighten tolerance usage per dataset (if specific vertical tolerances are stated).
 
 ## What’s Missing Backend-Side
 1. Transformation Pipelines
-   - Provide curated PROJ pipelines for GIGS transforms (Helmert PV/CF, MB, grid/NADCON/NTv2) and select them deterministically.
+   - Curated PROJ pipelines and deterministic selection for 5203/5205/5207/5213.
 2. User-Defined CRS / Bin Grid
-   - Minimal support for GIGS binary grid & seismic CRS so `tfm-5209`–`tfm-5212` can run; consider ephemeral CRS registration API.
+   - Minimal loader for bin-grid/seismic CRS + ephemeral registration to unlock `tfm-5209`–`tfm-5212`.
 3. Vertical Transformations
-   - True vertical datum transformations (ellipsoidal ↔ chart/sounding depth) using PROJ where definitions exist; remove reliance on inferred TVD shifts.
+   - DONE: `/api/transform/vertical` endpoint. Next: expand vertical CRS mapping for 5500 and add any required geoid grids.
 
-## Next Steps
-1. Address failing Series 5200 datasets
-   - Curate PV/MB/NTv2/NADCON pipelines and pin via `preferred_ops`/`path_id`; record choices in report.
-   - Ensure required grids are present; document list and location.
-2. Implement user-defined CRS / bin-grid
-   - Minimal loader + ephemeral registration to unlock `tfm-5209`–`tfm-5212`.
-3. Expand 5500 coverage
-   - Parse all ASCII inputs, validate horizontal + vertical (prefer real vertical transform when available).
-   - Add trajectory-style checks via `/api/transform/local-trajectory` where appropriate.
-4. Automation & CI
-   - Optionally run the GIGS runner in CI and publish artifacts; fail on regressions for required series.
-5. Frontend enhancements
-   - Deep link from a failing case to the “Transform Via” page prefilled with the same parameters.
-   - Optional: highlight deltas that exceed per-test tolerances directly in the modal.
+## Way Forward to Full GIGS Support (5100/5200/5500)
+1. Series 5100 – keep green
+   - Track regressions in CI; no additional work required.
+2. Series 5200 – targeted pipeline pinning
+   - 5203 PV: PV Helmert; verify sign conventions; add `preferred_ops` hints and record `path_id`.
+   - 5205 Molodensky‑Badekas: pin MB with correct pivot; align rounding.
+   - 5207 NTv2: confirm grid presence (checklist); pin grid path.
+   - 5213 Geo 2D three‑translation: select Abridged Molodensky/concatenated chains per dataset.
+   - Document and bundle any additional grids used.
+3. Series 5500 – wells to green
+   - Confirm vertical EPSG extraction for all files; add fallback mapping list where missing.
+   - Keep grid checklist green (OSTN15/OSGM15 now bundled; add others as needed).
+   - Use `/api/transform/vertical` for TVD; mark pass/fail against dataset vertical tolerances when available (fallback to cartesian).
+   - Add optional local-trajectory validations using `/api/transform/local-trajectory` where datasets align.
+4. CI Automation
+   - Run GIGS runner in CI; attach JSON/HTML artifacts; fail on regressions for 5100/5200-required/5500.
+5. Frontend/UX
+   - Deep link to Transform Via (DONE) and show grids/vertical info for failing cases; keep tolerance highlight badges; optional per-series summary banners.
 
 ## Useful Files & Commands
 - Manual harness: `python3 tests/gigs/run_manual.py`
@@ -52,5 +65,6 @@
 - Frontend viewer: GIGS Reports tab; includes Run/Refresh/CSV and details modal
 - Backend endpoints: `/api/gigs/report`, `/api/gigs/report/html`, `/api/gigs/run`
 - Reference datasets: `docs/standards/GIGS_Test_Dataset_v2.1/`
+ - Grids: `/api/transform/required-grids`, `/api/transform/prefetch-grids`, `backend/scripts/fetch_grids.sh` (OSTN15/OSGM15)
 
 Keep this file in sync when new datasets or backend features land so the next Codex session can pick up instantly.
