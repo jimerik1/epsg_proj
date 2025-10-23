@@ -37,6 +37,18 @@ Content-Type: application/json
 }
 ```
 
+### Optional: Per-segment path selection
+Control which TransformerGroup path is used on each leg by passing `segment_path_ids`, aligned to `len(path) - 1`. You may also provide `segment_preferred_ops` to hint operation names per leg.
+
+```json
+{
+  "path": ["EPSG:4326", "EPSG:4277", "EPSG:27700"],
+  "position": {"lon": -3.1883, "lat": 55.9533},
+  "segment_path_ids": [1, 0],
+  "segment_preferred_ops": [["Position Vector"], ["OSTN15", "NTv2"]]
+}
+```
+
 ## Response
 ```json
 {

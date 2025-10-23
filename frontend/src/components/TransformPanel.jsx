@@ -12,6 +12,7 @@ export default function TransformPanel() {
   const [inputMode, setInputMode] = useState('geographic');
   const [result, setResult] = useState(null);
   const [paths, setPaths] = useState([]);
+  const [selectedPathId, setSelectedPathId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [coordBusy, setCoordBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -137,6 +138,7 @@ export default function TransformPanel() {
         source_crs: source,
         target_crs: target,
         position,
+        ...(selectedPathId != null ? { path_id: selectedPathId } : {}),
       });
       setResult(res);
       const p = await getAvailablePaths(source, target);
@@ -153,8 +155,18 @@ export default function TransformPanel() {
     if (inputMode === 'projected') {
       updateProjectedFromGeographic(numericLon, numericLat);
     }
+    // Refresh available paths on CRS change
+    (async () => {
+      try {
+        const p = await getAvailablePaths(source, target);
+        setPaths(p.transformation_paths || []);
+        setSelectedPathId(null);
+      } catch (e) {
+        // ignore
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source]);
+  }, [source, target]);
 
   const handleModeChange = (mode) => {
     setInputMode(mode);
@@ -164,47 +176,66 @@ export default function TransformPanel() {
   };
 
   return (
-    <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <label>Source CRS: <input value={source} onChange={e => setSource(e.target.value)} /></label>
-        <label>Target CRS: <input value={target} onChange={e => setTarget(e.target.value)} /></label>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <label><input type="radio" value="geographic" checked={inputMode === 'geographic'} onChange={() => handleModeChange('geographic')} /> Lon/Lat</label>
-          <label><input type="radio" value="projected" checked={inputMode === 'projected'} onChange={() => handleModeChange('projected')} /> X/Y (source)</label>
+    <div className="card">
+      <div className="card-body flex flex-wrap gap-3 items-end">
+        <label className="label">Source CRS
+          <input className="input" value={source} onChange={e => setSource(e.target.value)} />
+        </label>
+        <label className="label">Target CRS
+          <input className="input" value={target} onChange={e => setTarget(e.target.value)} />
+        </label>
+        <div className="flex items-center gap-3">
+          <label className="label inline-flex items-center gap-2"><input type="radio" value="geographic" checked={inputMode === 'geographic'} onChange={() => handleModeChange('geographic')} /> Lon/Lat</label>
+          <label className="label inline-flex items-center gap-2"><input type="radio" value="projected" checked={inputMode === 'projected'} onChange={() => handleModeChange('projected')} /> X/Y (source)</label>
         </div>
         {inputMode === 'geographic' ? (
           <>
-            <label>Lon: <input type="number" value={lon} onChange={e => setLon(e.target.value)} /></label>
-            <label>Lat: <input type="number" value={lat} onChange={e => setLat(e.target.value)} /></label>
+            <label className="label">Lon
+              <input className="input" type="number" value={lon} onChange={e => setLon(e.target.value)} />
+            </label>
+            <label className="label">Lat
+              <input className="input" type="number" value={lat} onChange={e => setLat(e.target.value)} />
+            </label>
           </>
         ) : (
           <>
-            <label>X: <input type="number" value={x} onChange={e => setX(e.target.value)} /></label>
-            <label>Y: <input type="number" value={y} onChange={e => setY(e.target.value)} /></label>
-            <button onClick={applyProjectedInputs} disabled={coordBusy || loading}>Use X/Y</button>
+            <label className="label">X
+              <input className="input" type="number" value={x} onChange={e => setX(e.target.value)} />
+            </label>
+            <label className="label">Y
+              <input className="input" type="number" value={y} onChange={e => setY(e.target.value)} />
+            </label>
+            <button className="btn" onClick={applyProjectedInputs} disabled={coordBusy || loading}>Use X/Y</button>
           </>
         )}
-        <button onClick={runTransform} disabled={loading}>{loading ? 'Transforming...' : 'Transform'}</button>
+        <button className="btn btn-primary" onClick={runTransform} disabled={loading}>{loading ? 'Transforming...' : 'Transform'}</button>
       </div>
-      <div style={{ marginTop: 12 }}>
+      <div className="px-4 pb-4">
         <InteractiveMap
           lat={numericLat}
           lon={numericLon}
           onPositionChange={handleMapChange}
         />
       </div>
-      {error && <div style={{ color: 'red', marginTop: 8 }}>{error}</div>}
+      {error && <div className="text-red-600 text-sm px-4">{error}</div>}
       {result && (
-        <pre style={{ background: '#f8f8f8', padding: 8, marginTop: 12 }}>{JSON.stringify(result, null, 2)}</pre>
+        <pre className="bg-gray-900 text-green-200 text-xs p-3 rounded mx-4 my-3">{JSON.stringify(result, null, 2)}</pre>
       )}
       {paths?.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <h4>Available Paths</h4>
-          <ul>
-            {paths.map(p => (
-              <li key={p.path_id}>{p.description} | accuracy: {String(p.accuracy)}</li>
-            ))}
-          </ul>
+        <div className="px-4 pb-4">
+          <h4 className="font-semibold mb-1">Available Paths</h4>
+          <div className="flex gap-2 items-center flex-wrap">
+            <label className="label">Use Path
+              <select className="input" value={selectedPathId ?? ''} onChange={e => setSelectedPathId(e.target.value === '' ? null : Number(e.target.value))}>
+                <option value="">Best available</option>
+                {paths.map(p => (
+                  <option key={p.path_id} value={p.path_id}>
+                    #{p.path_id} | {p.description} | acc: {p.accuracy == null || Number(p.accuracy) < 0 ? 'unknown' : `${Number(p.accuracy) >= 1 ? Number(p.accuracy).toFixed(2).replace(/\.0+$/,'').replace(/(\.\d*?)0+$/,'$1') : Number(p.accuracy).toFixed(3).replace(/\.0+$/,'').replace(/(\.\d*?)0+$/,'$1')} ${p.accuracy_unit || 'm'}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
       )}
     </div>

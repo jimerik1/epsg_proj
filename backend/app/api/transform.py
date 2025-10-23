@@ -16,6 +16,9 @@ class TransformRequest(BaseModel):
     target_crs: str
     position: Dict[str, float]
     vertical_value: Optional[float] = None
+    # Optional selection of a specific operation path
+    path_id: Optional[int] = None
+    preferred_ops: Optional[List[str]] = None
 
 
 class TrajectoryRequest(BaseModel):
@@ -28,6 +31,9 @@ class ViaRequest(BaseModel):
     path: List[str]
     position: Dict[str, float]
     vertical_value: Optional[float] = None
+    # Optional per-segment TransformerGroup indices (len = len(path) - 1)
+    segment_path_ids: Optional[List[Optional[int]]] = None
+    segment_preferred_ops: Optional[List[Optional[List[str]]]] = None
 
 
 class CustomTransformRequest(BaseModel):
@@ -81,9 +87,20 @@ async def transform_direct(request: TransformRequest):
         y = request.position.get("y") or request.position.get("lat")
         z = request.vertical_value
 
-        result = service.transform_point(
-            request.source_crs, request.target_crs, x, y, z
-        )
+        if request.path_id is not None or request.preferred_ops:
+            result = service.transform_point_with_selection(
+                request.source_crs,
+                request.target_crs,
+                x,
+                y,
+                z,
+                path_id=request.path_id,
+                preferred_ops=request.preferred_ops,
+            )
+        else:
+            result = service.transform_point(
+                request.source_crs, request.target_crs, x, y, z
+            )
 
         target_crs = CRS.from_string(request.target_crs)
 
@@ -179,6 +196,84 @@ async def get_available_paths(source_crs: str, target_crs: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/available-paths-via")
+async def get_available_paths_via(source_crs: str, via_crs: str, target_crs: str):
+    """List available TransformerGroup paths for source→via and via→target."""
+    try:
+        service = TransformationService()
+        leg1 = service.get_all_transformation_paths(source_crs, via_crs)
+        leg2 = service.get_all_transformation_paths(via_crs, target_crs)
+        return {
+            "source_crs": source_crs,
+            "via_crs": via_crs,
+            "target_crs": target_crs,
+            "leg1_paths": leg1,
+            "leg2_paths": leg2,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/suggest-vias")
+async def suggest_vias(source_crs: str, target_crs: str):
+    """Return a small, validated set of suggested via CRS codes between source and target.
+
+    Strategy:
+    - Include geodetic CRS (and 3D variants) for source and target if resolvable.
+    - Include global pivots commonly useful for pipelines: EPSG:4326, EPSG:4978, EPSG:4979.
+    - Validate that both source→candidate and candidate→target have at least one transformer.
+    """
+    try:
+        service = TransformationService()
+        suggestions = []
+        seen = set()
+
+        def add(code: str, reason: str):
+            key = code.strip()
+            if not key or key in seen:
+                return
+            # Validate there exists a path in both legs
+            try:
+                leg1 = service.get_all_transformation_paths(source_crs, key)
+                leg2 = service.get_all_transformation_paths(key, target_crs)
+            except Exception:
+                return
+            if not leg1 or not leg2:
+                return
+            suggestions.append({"code": key, "reason": reason})
+            seen.add(key)
+
+        # Geodetic CRS of source/target
+        try:
+            src = CRS.from_string(source_crs)
+            src_geo = getattr(src, "geodetic_crs", None) or src
+            add(src_geo.to_string(), "source geodetic")
+            try:
+                add(src_geo.to_3d().to_string(), "source geodetic 3D")
+            except Exception:
+                pass
+        except Exception:
+            pass
+        try:
+            tgt = CRS.from_string(target_crs)
+            tgt_geo = getattr(tgt, "geodetic_crs", None) or tgt
+            add(tgt_geo.to_string(), "target geodetic")
+            try:
+                add(tgt_geo.to_3d().to_string(), "target geodetic 3D")
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Common pivots
+        for code, reason in [("EPSG:4326", "WGS 84"), ("EPSG:4979", "WGS 84 3D"), ("EPSG:4978", "ECEF")]:
+            add(code, reason)
+
+        return {"source_crs": source_crs, "target_crs": target_crs, "suggestions": suggestions}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/via")
 async def transform_via(request: ViaRequest):
     try:
@@ -191,12 +286,30 @@ async def transform_via(request: ViaRequest):
         acc_known = True
 
         cur_x, cur_y, cur_z = x, y, z
+        seg_ids = request.segment_path_ids or []
+        seg_ops = request.segment_preferred_ops or []
+
         for i in range(len(request.path) - 1):
             src = request.path[i]
             dst = request.path[i + 1]
-            out = service.transform_point(src, dst, cur_x, cur_y, cur_z)
+            chosen_id = seg_ids[i] if i < len(seg_ids) else None
+            chosen_ops = seg_ops[i] if i < len(seg_ops) else None
+
+            if chosen_id is not None or chosen_ops:
+                out = service.transform_point_with_selection(
+                    src,
+                    dst,
+                    cur_x,
+                    cur_y,
+                    cur_z,
+                    path_id=chosen_id,
+                    preferred_ops=chosen_ops,
+                )
+            else:
+                out = service.transform_point(src, dst, cur_x, cur_y, cur_z)
+
             cur_x, cur_y, cur_z = out["x"], out["y"], out.get("z")
-            if out["accuracy"] is None:
+            if out.get("accuracy") is None:
                 acc_known = False
             else:
                 total_accuracy += float(out["accuracy"])  # naive aggregation

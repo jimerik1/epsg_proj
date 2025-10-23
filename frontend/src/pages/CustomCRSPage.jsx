@@ -340,21 +340,21 @@ export default function CustomCRSPage() {
   const mapPosition = useMemo(() => ({ lon: wgsLon, lat: wgsLat }), [wgsLon, wgsLat]);
 
   return (
-    <div>
-      <h3>Custom CRS</h3>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-        <button onClick={() => setMode('viewer')} disabled={mode === 'viewer'}>Parse & Match</button>
-        <button onClick={() => setMode('builder')} disabled={mode === 'builder'}>Build Definition</button>
-        <button onClick={() => setMode('proj')} disabled={mode === 'proj'}>Quick PROJ Builder</button>
+    <div className="space-y-4">
+      <h3 className="text-lg font-semibold">Custom CRS</h3>
+      <div className="flex gap-2">
+        <button className={`btn ${mode==='viewer' ? 'btn-primary' : ''}`} onClick={() => setMode('viewer')} disabled={mode === 'viewer'}>Parse & Match</button>
+        <button className={`btn ${mode==='builder' ? 'btn-primary' : ''}`} onClick={() => setMode('builder')} disabled={mode === 'builder'}>Build Definition</button>
+        <button className={`btn ${mode==='proj' ? 'btn-primary' : ''}`} onClick={() => setMode('proj')} disabled={mode === 'proj'}>Quick PROJ Builder</button>
       </div>
 
       {mode === 'viewer' && (
         <>
-          <p>Paste XML (CD_GEO_SYSTEM, CD_GEO_ZONE, CD_GEO_DATUM, CD_GEO_ELLIPSOID) below to parse and find EPSG matches.</p>
+          <p className="text-sm text-gray-700">Paste XML (CD_GEO_SYSTEM, CD_GEO_ZONE, CD_GEO_DATUM, CD_GEO_ELLIPSOID) below to parse and find EPSG matches.</p>
           <CustomCRSEditor value={xml} onChange={setXml} />
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <button onClick={doParse} disabled={loading || !xml.trim()}>Parse</button>
-            <button onClick={doMatch} disabled={loading || !xml.trim()}>Find EPSG Matches</button>
+          <div className="flex gap-2 mt-2">
+            <button className="btn btn-primary" onClick={doParse} disabled={loading || !xml.trim()}>Parse</button>
+            <button className="btn" onClick={doMatch} disabled={loading || !xml.trim()}>Find EPSG Matches</button>
           </div>
         </>
       )}
@@ -362,29 +362,26 @@ export default function CustomCRSPage() {
       {mode === 'builder' && (
         <div style={{ display: 'grid', gap: 12 }}>
           <p>Define CRS metadata and generate XML. Values start with a UTM example.</p>
-          <section style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 16, background: '#f9fafb' }}>
-            <h4 style={{ marginBottom: 12 }}>System</h4>
-            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <section className="card">
+            <div className="card-header">System</div>
+            <div className="card-body grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
               {Object.entries(builder.system).map(([k, v]) => {
                 const meta = getFieldInfo(SYSTEM_FIELD_INFO, k);
                 return (
                   <InfoTooltip key={k} label={meta.label} tip={meta.tip}>
-                    <input
-                      value={v}
+                    <input className="input" value={v}
                       onChange={e => setBuilder(prev => ({
                         ...prev,
                         system: { ...prev.system, [k]: e.target.value },
-                      }))}
-                      style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
-                    />
+                      }))} />
                   </InfoTooltip>
                 );
               })}
             </div>
           </section>
-          <section style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 16, background: '#f9fafb' }}>
-            <h4 style={{ marginBottom: 12 }}>Zone / Projection</h4>
-            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <section className="card">
+            <div className="card-header">Zone / Projection</div>
+            <div className="card-body grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
               {Object.entries(builder.zone).map(([k, v]) => {
                 const meta = getFieldInfo(ZONE_FIELD_INFO, k);
                 return (
@@ -402,9 +399,9 @@ export default function CustomCRSPage() {
               })}
             </div>
           </section>
-          <section style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 16, background: '#f9fafb' }}>
-            <h4 style={{ marginBottom: 12 }}>Datum</h4>
-            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <section className="card">
+            <div className="card-header">Datum</div>
+            <div className="card-body grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
               {Object.entries(builder.datum).map(([k, v]) => {
                 const meta = getFieldInfo(DATUM_FIELD_INFO, k);
                 return (
@@ -415,16 +412,16 @@ export default function CustomCRSPage() {
                         ...prev,
                         datum: { ...prev.datum, [k]: e.target.value },
                       }))}
-                      style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
+                      className="input"
                     />
                   </InfoTooltip>
                 );
               })}
             </div>
           </section>
-          <section style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 16, background: '#f9fafb' }}>
-            <h4 style={{ marginBottom: 12 }}>Ellipsoid</h4>
-            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <section className="card">
+            <div className="card-header">Ellipsoid</div>
+            <div className="card-body grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
               {Object.entries(builder.ellipsoid).map(([k, v]) => {
                 const meta = getFieldInfo(ELLIPSOID_FIELD_INFO, k);
                 return (
@@ -435,7 +432,7 @@ export default function CustomCRSPage() {
                         ...prev,
                         ellipsoid: { ...prev.ellipsoid, [k]: e.target.value },
                       }))}
-                      style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
+                      className="input"
                     />
                   </InfoTooltip>
                 );
@@ -468,43 +465,43 @@ export default function CustomCRSPage() {
             <h4>Define PROJ Parameters</h4>
             <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
               <InfoTooltip label={PROJ_FIELD_INFO.proj.label} tip={PROJ_FIELD_INFO.proj.tip}>
-                <input value={projBuilder.proj} onChange={e => setProjBuilder(prev => ({ ...prev, proj: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }} />
+                <input className="input" value={projBuilder.proj} onChange={e => setProjBuilder(prev => ({ ...prev, proj: e.target.value }))} />
               </InfoTooltip>
               <InfoTooltip label={PROJ_FIELD_INFO.zone.label} tip={PROJ_FIELD_INFO.zone.tip}>
-                <input value={projBuilder.zone} onChange={e => setProjBuilder(prev => ({ ...prev, zone: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }} />
+                <input className="input" value={projBuilder.zone} onChange={e => setProjBuilder(prev => ({ ...prev, zone: e.target.value }))} />
               </InfoTooltip>
               <label title={PROJ_FIELD_INFO.south.tip} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input type="checkbox" checked={projBuilder.south} onChange={e => setProjBuilder(prev => ({ ...prev, south: e.target.checked }))} />
                 {PROJ_FIELD_INFO.south.label}
               </label>
               <InfoTooltip label={PROJ_FIELD_INFO.k0.label} tip={PROJ_FIELD_INFO.k0.tip}>
-                <input value={projBuilder.k0} onChange={e => setProjBuilder(prev => ({ ...prev, k0: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }} />
+                <input className="input" value={projBuilder.k0} onChange={e => setProjBuilder(prev => ({ ...prev, k0: e.target.value }))} />
               </InfoTooltip>
               <InfoTooltip label={PROJ_FIELD_INFO.lon_0.label} tip={PROJ_FIELD_INFO.lon_0.tip}>
-                <input value={projBuilder.lon_0} onChange={e => setProjBuilder(prev => ({ ...prev, lon_0: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }} />
+                <input className="input" value={projBuilder.lon_0} onChange={e => setProjBuilder(prev => ({ ...prev, lon_0: e.target.value }))} />
               </InfoTooltip>
               <InfoTooltip label={PROJ_FIELD_INFO.lat_0.label} tip={PROJ_FIELD_INFO.lat_0.tip}>
-                <input value={projBuilder.lat_0} onChange={e => setProjBuilder(prev => ({ ...prev, lat_0: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }} />
+                <input className="input" value={projBuilder.lat_0} onChange={e => setProjBuilder(prev => ({ ...prev, lat_0: e.target.value }))} />
               </InfoTooltip>
               <InfoTooltip label={PROJ_FIELD_INFO.x_0.label} tip={PROJ_FIELD_INFO.x_0.tip}>
-                <input value={projBuilder.x_0} onChange={e => setProjBuilder(prev => ({ ...prev, x_0: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }} />
+                <input className="input" value={projBuilder.x_0} onChange={e => setProjBuilder(prev => ({ ...prev, x_0: e.target.value }))} />
               </InfoTooltip>
               <InfoTooltip label={PROJ_FIELD_INFO.y_0.label} tip={PROJ_FIELD_INFO.y_0.tip}>
-                <input value={projBuilder.y_0} onChange={e => setProjBuilder(prev => ({ ...prev, y_0: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }} />
+                <input className="input" value={projBuilder.y_0} onChange={e => setProjBuilder(prev => ({ ...prev, y_0: e.target.value }))} />
               </InfoTooltip>
               <InfoTooltip label={PROJ_FIELD_INFO.a.label} tip={PROJ_FIELD_INFO.a.tip}>
-                <input value={projBuilder.a} onChange={e => setProjBuilder(prev => ({ ...prev, a: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }} />
+                <input className="input" value={projBuilder.a} onChange={e => setProjBuilder(prev => ({ ...prev, a: e.target.value }))} />
               </InfoTooltip>
               <InfoTooltip label={PROJ_FIELD_INFO.f.label} tip={PROJ_FIELD_INFO.f.tip}>
-                <input value={projBuilder.f} onChange={e => setProjBuilder(prev => ({ ...prev, f: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }} />
+                <input className="input" value={projBuilder.f} onChange={e => setProjBuilder(prev => ({ ...prev, f: e.target.value }))} />
               </InfoTooltip>
               <InfoTooltip label={PROJ_FIELD_INFO.e.label} tip={PROJ_FIELD_INFO.e.tip}>
-                <input value={projBuilder.e} onChange={e => setProjBuilder(prev => ({ ...prev, e: e.target.value }))} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }} />
+                <input className="input" value={projBuilder.e} onChange={e => setProjBuilder(prev => ({ ...prev, e: e.target.value }))} />
               </InfoTooltip>
             </div>
             <div style={{ marginTop: 8 }}>
               <strong>Generated PROJ String</strong>
-              <pre style={{ background: '#f8f8f8', padding: 8 }}>{(() => {
+              <pre className="bg-gray-900 text-green-200 text-xs p-3 rounded">{(() => {
                 const parts = [`+proj=${projBuilder.proj}`];
                 if (projBuilder.zone) parts.push(`+zone=${projBuilder.zone}`);
                 if (projBuilder.south) parts.push('+south');
@@ -607,23 +604,35 @@ export default function CustomCRSPage() {
         <div style={{ marginTop: 12 }}>
           <h4>Location Explorer ({selectedCode})</h4>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <label>Geodetic ({geodeticCode || 'unknown'}) Lon: <input type="number" value={datumLon} onChange={e => setDatumLon(e.target.value)} /></label>
-            <label>Lat: <input type="number" value={datumLat} onChange={e => setDatumLat(e.target.value)} /></label>
-            <button onClick={() => updateProjectedFromGeographic(numericDatumLon, numericDatumLat)} disabled={coordBusy || loading}>Apply Geodetic</button>
+            <label className="label">Geodetic ({geodeticCode || 'unknown'}) Lon
+              <input className="input" type="number" value={datumLon} onChange={e => setDatumLon(e.target.value)} />
+            </label>
+            <label className="label">Lat
+              <input className="input" type="number" value={datumLat} onChange={e => setDatumLat(e.target.value)} />
+            </label>
+            <button className="btn" onClick={() => updateProjectedFromGeographic(numericDatumLon, numericDatumLat)} disabled={coordBusy || loading}>Apply Geodetic</button>
           </div>
           <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <label>Projected ({selectedCode}) X: <input type="number" value={projX} onChange={e => setProjX(e.target.value)} placeholder="Projected X" /></label>
-            <label>Y: <input type="number" value={projY} onChange={e => setProjY(e.target.value)} placeholder="Projected Y" /></label>
-            <button onClick={applyProjectedInputs} disabled={coordBusy || loading}>Apply Projected</button>
-            <select value={selectedCode} onChange={e => setSelectedCode(e.target.value)}>
+            <label className="label">Projected ({selectedCode}) X
+              <input className="input" type="number" value={projX} onChange={e => setProjX(e.target.value)} placeholder="Projected X" />
+            </label>
+            <label className="label">Y
+              <input className="input" type="number" value={projY} onChange={e => setProjY(e.target.value)} placeholder="Projected Y" />
+            </label>
+            <button className="btn" onClick={applyProjectedInputs} disabled={coordBusy || loading}>Apply Projected</button>
+            <select className="input" value={selectedCode} onChange={e => setSelectedCode(e.target.value)}>
               {matches?.matches?.map(match => (
                 <option key={match.epsg_code} value={match.epsg_code}>{match.epsg_code} — {match.name}</option>
               ))}
             </select>
           </div>
           <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <label>WGS84 Lon: <input type="number" value={wgsLon} readOnly /></label>
-            <label>Lat: <input type="number" value={wgsLat} readOnly /></label>
+            <label className="label">WGS84 Lon
+              <input className="input" type="number" value={wgsLon} readOnly />
+            </label>
+            <label className="label">Lat
+              <input className="input" type="number" value={wgsLat} readOnly />
+            </label>
           </div>
           <div style={{ marginTop: 12 }}>
             <InteractiveMap

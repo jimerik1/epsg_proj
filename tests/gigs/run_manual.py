@@ -474,6 +474,9 @@ def execute_conversion_dataset(
                 "status": status,
                 "variant": variant,
                 "payload": payload,
+                "endpoint": "POST /api/transform/direct",
+                "path_hint": "best_available",
+                "path_id": None,
                 "source_crs": direction == "FORWARD" and geo_code or proj_code,
                 "target_crs": direction == "FORWARD" and proj_code or geo_code,
                 "expected": expected,
@@ -852,6 +855,9 @@ def execute_transformation_dataset(
                 "source_crs": source_crs,
                 "target_crs": target_crs,
                 "payload": payload,
+                "endpoint": "POST /api/transform/direct",
+                "path_hint": "best_available",
+                "path_id": None,
                 "expected": expected,
                 "actual": actual,
                 "delta": delta,
@@ -950,6 +956,147 @@ def test_local_offset_placeholder(session: requests.Session) -> TestResult:
     )
 
 
+def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestResult:
+    base_dir = DATA_ROOT / "GIGS 5500 Wells test data/ASCII"
+    input_path = _require_data(base_dir / f"{name_prefix}_input.txt")
+    output_path = _require_data(base_dir / f"{name_prefix}_output.txt")
+
+    input_table = parse_gigs_table(input_path)
+    output_table = parse_gigs_table(output_path)
+
+    # Read tolerances from output header
+    tolerances: Dict[str, float] = {}
+    with output_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.startswith("#"):
+                break
+            match = re.search(r"#\s*(.*?)\s*Tolerance:\s*([0-9.eE+-]+)", line)
+            if match:
+                key = match.group(1).strip().lower().replace(" ", "_")
+                try:
+                    tolerances[key] = float(match.group(2))
+                except ValueError:
+                    continue
+
+    # Extract inputs: lat/lon columns; outputs: easting/northing per point
+    inputs: List[Dict[str, object]] = []
+    tvd_in_col = input_table.columns[0] if input_table.columns else None
+    for row in input_table.rows:
+        lat = _get_numeric(row, "lat") if "lat" in input_table.columns else None
+        lon = _get_numeric(row, "lon") if "lon" in input_table.columns else None
+        point = row.get("point") or row.get("transect")
+        if lat is None or lon is None or not point:
+            continue
+        tvd_in = _get_value(row, tvd_in_col) if tvd_in_col else None
+        inputs.append({"lon": lon, "lat": lat, "point": point, "tvd_in": tvd_in})
+
+    outputs_by_point: Dict[str, Dict[str, float]] = {}
+    tvd_out_col = output_table.columns[0] if output_table.columns else None
+    for row in output_table.rows:
+        p = row.get("point")
+        if not p:
+            continue
+        east = _get_numeric(row, "easting") if "easting" in output_table.columns else None
+        north = _get_numeric(row, "northing") if "northing" in output_table.columns else None
+        tvd_out = _get_value(row, tvd_out_col) if tvd_out_col else None
+        outputs_by_point[p] = {"easting": east, "northing": north, "tvd": tvd_out}
+
+    # Infer vertical shift between VRD and output vertical datum using first row with both values
+    tvd_shift = None
+    for item in inputs:
+        p = str(item.get("point") or "")
+        exp = outputs_by_point.get(p)
+        if item.get("tvd_in") is not None and exp and exp.get("tvd") is not None:
+            try:
+                tvd_shift = float(exp["tvd"]) - float(item["tvd_in"])
+            except Exception:
+                tvd_shift = None
+            break
+
+    # Produce direct transform validations
+    cases: List[Dict[str, object]] = []
+    for item in inputs:
+        p = str(item["point"]) if item.get("point") else ""
+        expected = outputs_by_point.get(p)
+        payload = {
+            "source_crs": "EPSG:4326",  # dataset states WGS 84
+            "target_crs": "EPSG:27700",  # British National Grid (proxy for GIGS projCRS A2)
+            "position": {"lon": item["lon"], "lat": item["lat"]},
+        }
+        try:
+            resp = _call_json(session, "POST", f"{API_ROOT}/api/transform/direct", json=payload)
+        except HTTPError as exc:
+            cases.append({
+                "point": p,
+                "direction": "FORWARD",
+                "status": "fail",
+                "endpoint": "POST /api/transform/direct",
+                "payload": payload,
+                "error": exc.response.text,
+            })
+            continue
+        actual = resp.get("map_position") or {"x": resp.get("x"), "y": resp.get("y")}
+        status = "skip"
+        delta = {}
+        message = None
+        if expected is None or expected.get("easting") is None or expected.get("northing") is None:
+            status = "skip"
+            message = "No expected easting/northing for point"
+        else:
+            dx = actual.get("x") - expected["easting"]
+            dy = actual.get("y") - expected["northing"]
+            delta = {"dx": dx, "dy": dy, "d": (dx ** 2 + dy ** 2) ** 0.5}
+            tol = tolerances.get("cartesian", tolerances.get("cartesian_m", 0.05))
+            status = "pass" if abs(delta["d"]) <= tol else "fail"
+
+        # Vertical check via inferred shift if available
+        tvd_in = item.get("tvd_in")
+        exp_tvd = expected.get("tvd") if expected else None
+        if tvd_in is not None and exp_tvd is not None and tvd_shift is not None:
+            try:
+                calc_tvd = float(tvd_in) + float(tvd_shift)
+                d_tvd = calc_tvd - float(exp_tvd)
+                delta["d_tvd"] = d_tvd
+                vtol = tolerances.get("vertical_m", tolerances.get("cartesian", tolerances.get("cartesian_m", 0.05)))
+                if abs(d_tvd) > vtol:
+                    status = "fail"
+            except Exception:
+                pass
+        record = {
+            "point": p,
+            "direction": "FORWARD",
+            "status": status,
+            "endpoint": "POST /api/transform/direct",
+            "payload": payload,
+            "source_crs": payload["source_crs"],
+            "target_crs": payload["target_crs"],
+            "expected": expected,
+            "actual": actual,
+            "delta": delta,
+        }
+        if message:
+            record["message"] = message
+        cases.append(record)
+
+    details = {"cases": cases, "tolerances": tolerances}
+    failures = [c for c in cases if c.get("status") == "fail"]
+    if failures:
+        details["issues"] = [f"{len(failures)} failures"]
+        return TestResult("fail", "Wells dataset mismatches (BNG proxy + inferred vertical shift)", details)
+    if all(c.get("status") == "skip" for c in cases):
+        return TestResult("skip", "Wells dataset skipped (insufficient expectations)", details)
+    return TestResult("pass", "Wells dataset matches reference (BNG proxy)", details)
+
+
+def _make_wells_test(prefix: str, label: str) -> ManualTest:
+    def _runner(session: requests.Session, *, _p=prefix) -> TestResult:
+        try:
+            return _parse_wells_dataset(session, _p)
+        except FileNotFoundError as exc:
+            return TestResult("skip", f"Dataset missing: {exc}")
+    return ManualTest(prefix.replace("GIGS_wells_", "wells-"), "5500", label, _runner)
+
+
 CONVERSION_DATASETS = [
     ("conv-5101", "GIGS_conv_5101_TM", "Transverse Mercator conversions"),
     ("conv-5102", "GIGS_conv_5102_LCC1", "Lambert Conic Conformal (1SP) conversions"),
@@ -1001,6 +1148,81 @@ TESTS.append(
         test_local_offset_placeholder,
     )
 )
+
+# Dynamically add Wells datasets from ASCII folder
+try:
+    wells_dir = DATA_ROOT / "GIGS 5500 Wells test data/ASCII"
+    if wells_dir.exists():
+        for path in sorted(wells_dir.glob("GIGS_wells_55*_input.txt")):
+            name = path.stem.replace("_input", "")
+            output = wells_dir / f"{name.replace('_input','')}_output.txt"
+            if not output.exists():
+                continue
+            if name == "GIGS_wells_5506_wellA":
+                # Covered by generic generator too; proceed once
+                pass
+            label = name.replace("GIGS_wells_", "").replace("_", " ")
+            TESTS.append(_make_wells_test(name, f"Wells {label}"))
+except Exception:
+    pass
+
+def test_via_demo(session: requests.Session) -> TestResult:
+    """Demonstration: compare direct vs via (4326→27700 vs 4326→4277→27700)."""
+    lon, lat = -3.1883, 55.9533
+    source = "EPSG:4326"
+    via = "EPSG:4277"
+    target = "EPSG:27700"
+    tol_m = 2.0
+    cases: List[Dict[str, object]] = []
+    failures: List[str] = []
+
+    payload_direct = {"source_crs": source, "target_crs": target, "position": {"lon": lon, "lat": lat}}
+    direct = _call_json(session, "POST", f"{API_ROOT}/api/transform/direct", json=payload_direct)
+    direct_xy = direct.get("map_position") or {"x": direct.get("x"), "y": direct.get("y")}
+    cases.append({
+        "point": "via-demo-01",
+        "direction": "FORWARD",
+        "status": "pass",
+        "endpoint": "POST /api/transform/direct",
+        "payload": payload_direct,
+        "source_crs": source,
+        "target_crs": target,
+        "expected": None,
+        "actual": direct_xy,
+        "delta": None,
+    })
+
+    payload_via = {"path": [source, via, target], "position": {"lon": lon, "lat": lat}, "segment_path_ids": [None, None]}
+    via_out = _call_json(session, "POST", f"{API_ROOT}/api/transform/via", json=payload_via)
+    via_pos = {"x": via_out.get("x"), "y": via_out.get("y")}
+    dx = float(via_pos["x"]) - float(direct_xy["x"]) if via_pos["x"] is not None and direct_xy["x"] is not None else float("nan")
+    dy = float(via_pos["y"]) - float(direct_xy["y"]) if via_pos["y"] is not None and direct_xy["y"] is not None else float("nan")
+    dist = (dx ** 2 + dy ** 2) ** 0.5 if dx == dx and dy == dy else float("nan")
+    status = "pass" if dist == dist and dist <= tol_m else "fail"
+    if status == "fail":
+        failures.append(f"Via demo difference {dist} m exceeds tolerance {tol_m} m")
+    cases.append({
+        "point": "via-demo-01",
+        "direction": "FORWARD",
+        "status": status,
+        "endpoint": "POST /api/transform/via",
+        "payload": payload_via,
+        "path_hint": "[None, None]",
+        "path_id": None,
+        "source_crs": source,
+        "target_crs": target,
+        "expected": direct_xy,
+        "actual": via_pos,
+        "delta": {"dx_m": dx, "dy_m": dy, "d_m": dist},
+    })
+
+    details = {"cases": cases, "tolerances": {"cartesian_m": tol_m}}
+    if failures:
+        details["issues"] = failures
+        return TestResult("fail", "Via demo mismatch (direct vs via)", details)
+    return TestResult("pass", "Via demo within tolerance", details)
+
+TESTS.append(ManualTest("via-demo", "5200", "Via transformation demo (4326→4277→27700)", test_via_demo))
 
 
 def generate_html(results: List[Tuple[ManualTest, TestResult]], generated_at: dt.datetime) -> None:

@@ -19,6 +19,62 @@ class TransformationService:
             self.transformer_cache[key] = tr
         return tr
 
+    def get_transformer_selected(
+        self,
+        source_crs: str,
+        target_crs: str,
+        path_id: Optional[int] = None,
+        preferred_ops: Optional[List[str]] = None,
+    ) -> Transformer:
+        """Return a Transformer for a specific operation path if requested.
+
+        - If path_id is provided, pick that transformer from TransformerGroup.
+        - If preferred_ops are provided, pick the first transformer whose
+          description or operations contain any of the provided substrings.
+        - Otherwise, fall back to the default best transformer.
+        """
+
+        cache_key = f"{source_crs}->{target_crs}#path={path_id}#ops={'|'.join(preferred_ops or [])}"
+        cached = self.transformer_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        if path_id is None and not preferred_ops:
+            return self.get_transformer(source_crs, target_crs)
+
+        group = TransformerGroup(source_crs, target_crs, always_xy=True)
+        selected: Optional[Transformer] = None
+
+        # Try explicit path index first
+        if path_id is not None and 0 <= path_id < len(group.transformers):
+            selected = group.transformers[path_id]
+
+        # Try preferred operation hints
+        if selected is None and preferred_ops:
+            ops_lower = [hint.lower() for hint in preferred_ops]
+            for tr in group.transformers:
+                desc = (tr.description or "").lower()
+                match_desc = any(h in desc for h in ops_lower)
+                if match_desc:
+                    selected = tr
+                    break
+                try:
+                    op_proj4 = "\n".join(op.to_proj4() for op in getattr(tr, "operations", [])).lower()
+                except Exception:
+                    op_proj4 = ""
+                if any(h in op_proj4 for h in ops_lower):
+                    selected = tr
+                    break
+
+        # Default to best available
+        if selected is None:
+            selected = group.transformers[0] if group.transformers else Transformer.from_crs(
+                source_crs, target_crs, always_xy=True
+            )
+
+        self.transformer_cache[cache_key] = selected
+        return selected
+
     def transform_point(
         self, source_crs: str, target_crs: str, x: float, y: float, z: Optional[float] = None
     ) -> Dict:
@@ -41,16 +97,64 @@ class TransformationService:
             "accuracy": transformer.accuracy,
         }
 
+    def transform_point_with_selection(
+        self,
+        source_crs: str,
+        target_crs: str,
+        x: float,
+        y: float,
+        z: Optional[float] = None,
+        path_id: Optional[int] = None,
+        preferred_ops: Optional[List[str]] = None,
+    ) -> Dict:
+        transformer = self.get_transformer_selected(
+            source_crs, target_crs, path_id=path_id, preferred_ops=preferred_ops
+        )
+        if z is not None:
+            x_out, y_out, z_out = transformer.transform(x, y, z)
+        else:
+            x_out, y_out = transformer.transform(x, y)
+            z_out = None
+
+        source = CRS.from_string(source_crs)
+        target = CRS.from_string(target_crs)
+
+        return {
+            "x": x_out,
+            "y": y_out,
+            "z": z_out,
+            "units_source": self._get_units(source),
+            "units_target": self._get_units(target),
+            "accuracy": transformer.accuracy,
+            "path_id": path_id,
+        }
+
     def get_all_transformation_paths(self, source_crs: str, target_crs: str) -> List[Dict]:
         group = TransformerGroup(source_crs, target_crs, always_xy=True)
         paths: List[Dict] = []
         for i, transformer in enumerate(group.transformers):
+            ops_info: List[Dict[str, Optional[str]]] = []
+            for op in getattr(transformer, "operations", []) or []:
+                try:
+                    ops_info.append(
+                        {
+                            "name": getattr(op, "name", None),
+                            "method_name": getattr(op, "method_name", None),
+                            "authority": getattr(op, "authority", None),
+                            "code": getattr(op, "code", None) or getattr(op, "id", None),
+                        }
+                    )
+                except Exception:
+                    # Best-effort only; keep going if unknown object shape
+                    ops_info.append({})
             paths.append(
                 {
                     "path_id": i,
                     "description": transformer.description,
                     "accuracy": transformer.accuracy,
+                    "accuracy_unit": "meter",
                     "operations": [op.to_proj4() for op in transformer.operations],
+                    "operations_info": ops_info,
                     "is_best_available": i == 0,
                 }
             )

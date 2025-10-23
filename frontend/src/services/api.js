@@ -17,6 +17,20 @@ export async function getAvailablePaths(source, target) {
   return res.json();
 }
 
+export async function getAvailablePathsVia(source, via, target) {
+  const url = `${API_URL}/api/transform/available-paths-via?source_crs=${encodeURIComponent(source)}&via_crs=${encodeURIComponent(via)}&target_crs=${encodeURIComponent(target)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function getViaSuggestions(source, target) {
+  const url = `${API_URL}/api/transform/suggest-vias?source_crs=${encodeURIComponent(source)}&target_crs=${encodeURIComponent(target)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function getCrsInfo(code) {
   const url = `${API_URL}/api/crs/info?code=${encodeURIComponent(code)}`;
   const res = await fetch(url);
@@ -94,6 +108,32 @@ export async function computeLocalTrajectory(payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function transformVia(payload) {
+  const res = await fetch(`${API_URL}/api/transform/via`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function getGigsReport() {
+  const res = await fetch(`${API_URL}/api/gigs/report`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export function getGigsReportHtmlUrl() {
+  return `${API_URL}/api/gigs/report/html`;
+}
+
+export async function runGigsTests() {
+  const res = await fetch(`${API_URL}/api/gigs/run`, { method: 'POST' });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

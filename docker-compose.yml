@@ -10,9 +10,11 @@ services:
       - PYTHONUNBUFFERED=1
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - GIGS_REPORT_DIR=/app/gigs_reports
     volumes:
       - ./backend:/app
       - proj-data:/app/proj_data
+      - ./tests/gigs:/app/gigs_reports:ro
     depends_on:
       - redis
     networks:
@@ -27,6 +29,7 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    command: sh -c "npm install --no-audit --no-fund && npm start"
     depends_on:
       - backend
     networks:
@@ -48,4 +51,3 @@ networks:
 volumes:
   proj-data:
   redis-data:
-

@@ -138,40 +138,58 @@ export default function LocalOffsetPage() {
   }, [result]);
 
   return (
-    <div>
-      <h3>Local Offset Comparison</h3>
-      <p>Compare ECEF-based local offsets with grid scale-factor approximation.</p>
+    <div className="space-y-3">
+      <h3 className="text-lg font-semibold">Local Offset Comparison</h3>
+      <p className="text-sm text-gray-700">Compare ECEF-based local offsets with grid scale-factor approximation.</p>
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <label>Target CRS: <input value={crs} onChange={e => setCrs(e.target.value)} placeholder="EPSG:32040" /></label>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <label><input type="radio" checked={refMode === 'geodetic'} onChange={() => setRefMode('geodetic')} /> Geographic</label>
-          <label><input type="radio" checked={refMode === 'projected'} onChange={() => setRefMode('projected')} /> Projected</label>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="label">Target CRS
+          <input className="input" value={crs} onChange={e => setCrs(e.target.value)} placeholder="EPSG:32040" />
+        </label>
+        <div className="flex items-center gap-3">
+          <label className="label inline-flex items-center gap-2"><input type="radio" checked={refMode === 'geodetic'} onChange={() => setRefMode('geodetic')} /> Geographic</label>
+          <label className="label inline-flex items-center gap-2"><input type="radio" checked={refMode === 'projected'} onChange={() => setRefMode('projected')} /> Projected</label>
         </div>
       </div>
 
       {refMode === 'geodetic' ? (
-        <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <label>Lon: <input type="number" value={refLon} onChange={e => setRefLon(e.target.value)} /></label>
-          <label>Lat: <input type="number" value={refLat} onChange={e => setRefLat(e.target.value)} /></label>
+        <div className="flex flex-wrap gap-3">
+          <label className="label">Lon
+            <input className="input" type="number" value={refLon} onChange={e => setRefLon(e.target.value)} />
+          </label>
+          <label className="label">Lat
+            <input className="input" type="number" value={refLat} onChange={e => setRefLat(e.target.value)} />
+          </label>
         </div>
       ) : (
-        <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <label>X: <input type="number" value={refX} onChange={e => setRefX(e.target.value)} /></label>
-          <label>Y: <input type="number" value={refY} onChange={e => setRefY(e.target.value)} /></label>
+        <div className="flex flex-wrap gap-3">
+          <label className="label">X
+            <input className="input" type="number" value={refX} onChange={e => setRefX(e.target.value)} />
+          </label>
+          <label className="label">Y
+            <input className="input" type="number" value={refY} onChange={e => setRefY(e.target.value)} />
+          </label>
         </div>
       )}
-      <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <label>Height (m): <input type="number" value={refHeight} onChange={e => setRefHeight(e.target.value)} /></label>
-        <label>ΔEast (m): <input type="number" value={east} onChange={e => setEast(e.target.value)} /></label>
-        <label>ΔNorth (m): <input type="number" value={north} onChange={e => setNorth(e.target.value)} /></label>
-        <label>ΔUp (m): <input type="number" value={up} onChange={e => setUp(e.target.value)} /></label>
-        <button onClick={handleCompute} disabled={loading}>{loading ? 'Computing…' : 'Compute'}</button>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="label">Height (m)
+          <input className="input" type="number" value={refHeight} onChange={e => setRefHeight(e.target.value)} />
+        </label>
+        <label className="label">ΔEast (m)
+          <input className="input" type="number" value={east} onChange={e => setEast(e.target.value)} />
+        </label>
+        <label className="label">ΔNorth (m)
+          <input className="input" type="number" value={north} onChange={e => setNorth(e.target.value)} />
+        </label>
+        <label className="label">ΔUp (m)
+          <input className="input" type="number" value={up} onChange={e => setUp(e.target.value)} />
+        </label>
+        <button className="btn btn-primary" onClick={handleCompute} disabled={loading}>{loading ? 'Computing…' : 'Compute'}</button>
       </div>
 
-      {error && <div style={{ color: 'red', marginTop: 8 }}>{error}</div>}
+      {error && <div className="text-red-600 text-sm">{error}</div>}
 
-      <div style={{ marginTop: 12 }}>
+      <div className="mt-3">
         <InteractiveMap
           lat={mapPosition.lat}
           lon={mapPosition.lon}
@@ -180,39 +198,47 @@ export default function LocalOffsetPage() {
       </div>
 
       {result && (
-        <div style={{ marginTop: 16, display: 'grid', gap: 16 }}>
-          <section style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-            <h4>Reference</h4>
-            <pre style={{ background: '#f8f8f8', padding: 8 }}>{JSON.stringify(result.reference, null, 2)}</pre>
+        <div className="mt-4 grid gap-4">
+          <section className="card">
+            <div className="card-header">Reference</div>
+            <div className="card-body">
+              <pre className="bg-gray-900 text-green-200 text-xs p-3 rounded">{JSON.stringify(result.reference, null, 2)}</pre>
+            </div>
           </section>
 
-          <section style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-            <h4>ECEF Pipeline Result</h4>
-            <pre style={{ background: '#f8f8f8', padding: 8 }}>{JSON.stringify(result.ecef_pipeline, null, 2)}</pre>
+          <section className="card">
+            <div className="card-header">ECEF Pipeline Result</div>
+            <div className="card-body">
+              <pre className="bg-gray-900 text-green-200 text-xs p-3 rounded">{JSON.stringify(result.ecef_pipeline, null, 2)}</pre>
+            </div>
           </section>
 
-          <section style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-            <h4>Scale-Factor Approximation</h4>
-            {result.scale_factor ? (
-              <pre style={{ background: '#f8f8f8', padding: 8 }}>{JSON.stringify(result.scale_factor, null, 2)}</pre>
-            ) : (
-              <div>No scale-factor result (projection may be geographic or factors unavailable).</div>
-            )}
+          <section className="card">
+            <div className="card-header">Scale-Factor Approximation</div>
+            <div className="card-body">
+              {result.scale_factor ? (
+                <pre className="bg-gray-900 text-green-200 text-xs p-3 rounded">{JSON.stringify(result.scale_factor, null, 2)}</pre>
+              ) : (
+                <div className="text-sm text-gray-600">No scale-factor result (projection may be geographic or factors unavailable).</div>
+              )}
+            </div>
           </section>
 
           {projectedDiff && (
-            <section style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-              <h4>Projected Coordinate Difference (ECEF − Scale)</h4>
-              <div>ΔX: {projectedDiff.dx.toFixed(6)} m</div>
-              <div>ΔY: {projectedDiff.dy.toFixed(6)} m</div>
-              <div>Planar offset: {projectedDiff.d.toFixed(6)} m</div>
+            <section className="card">
+              <div className="card-header">Projected Coordinate Difference (ECEF − Scale)</div>
+              <div className="card-body text-sm">
+                <div>ΔX: {projectedDiff.dx.toFixed(6)} m</div>
+                <div>ΔY: {projectedDiff.dy.toFixed(6)} m</div>
+                <div>Planar offset: {projectedDiff.d.toFixed(6)} m</div>
+              </div>
             </section>
           )}
 
           {geographicDiff && (
-            <section style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-              <h4>Geographic Separation</h4>
-              <div>{geographicDiff.d != null ? `${geographicDiff.d.toFixed(3)} m` : 'n/a'}</div>
+            <section className="card">
+              <div className="card-header">Geographic Separation</div>
+              <div className="card-body text-sm">{geographicDiff.d != null ? `${geographicDiff.d.toFixed(3)} m` : 'n/a'}</div>
             </section>
           )}
         </div>

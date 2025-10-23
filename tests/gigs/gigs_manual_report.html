@@ -14,7 +14,7 @@
 </head>
 <body>
   <h1>GIGS Manual Test Report</h1>
-  <p>Generated: 2025-10-22 20:01 UTC</p>
+  <p>Generated: 2025-10-23 11:33 UTC</p>
   <table>
     <thead>
       <tr>
@@ -9852,7 +9852,470 @@
 }</pre></td><td><pre>{
   &quot;d_lat&quot;: 0.0022451600000010785,
   &quot;d_lon&quot;: 0.0029332999999951426
-}</pre></td></tr></tbody></table></details></td></tr><tr><td>5300/5400/5500</td><td>local-offset</td><td>Local offset & trajectory comparisons</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Local offset and trajectory datasets require dedicated parser (TODO)</td></tr>
+}</pre></td></tr></tbody></table></details></td></tr><tr><td>5300/5400/5500</td><td>local-offset</td><td>Local offset & trajectory comparisons</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Local offset and trajectory datasets require dedicated parser (TODO)</td></tr><tr><td>5500</td><td>wells-5506_wellA</td><td>Wells 5506 wellA</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td>Wells dataset mismatches (BNG proxy + inferred vertical shift)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.03,
+    &quot;geographic&quot;: 3e-07
+  },
+  &quot;issues&quot;: [
+    &quot;3 failures&quot;
+  ]
+}</pre><details><summary>Case breakdown (4)</summary><table><thead><tr><th>Point</th><th>Direction</th><th>Status</th><th>Payload</th><th>Expected</th><th>Actual</th><th>Δ / Error</th></tr></thead><tbody><tr><td>RT</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.0375561,
+    &quot;lon&quot;: 2.2072694
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 688526.9,
+  &quot;northing&quot;: 246118.56,
+  &quot;tvd&quot;: -76.67
+}</pre></td><td><pre>{
+  &quot;x&quot;: 688498.798458593,
+  &quot;y&quot;: 246088.2467601559
+}</pre></td><td><pre>{
+  &quot;d&quot;: 41.33508363725649,
+  &quot;d_tvd&quot;: 0.0,
+  &quot;dx&quot;: -28.101541407057084,
+  &quot;dy&quot;: -30.313239844108466
+}</pre></td></tr><tr><td>Ground level (WRP)</td><td>FORWARD</td><td style='color:#424242; font-weight:bold'>SKIP</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.0375561,
+    &quot;lon&quot;: 2.2072694
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>null</pre></td><td><pre>{
+  &quot;x&quot;: 688498.798458593,
+  &quot;y&quot;: 246088.2467601559
+}</pre></td><td><pre>{}</pre></td></tr><tr><td>Horizon 1</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.0375561,
+    &quot;lon&quot;: 2.2072694
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 688526.9,
+  &quot;northing&quot;: 246118.56,
+  &quot;tvd&quot;: 783.59
+}</pre></td><td><pre>{
+  &quot;x&quot;: 688498.798458593,
+  &quot;y&quot;: 246088.2467601559
+}</pre></td><td><pre>{
+  &quot;d&quot;: 41.33508363725649,
+  &quot;d_tvd&quot;: -1.1368683772161603e-13,
+  &quot;dx&quot;: -28.101541407057084,
+  &quot;dy&quot;: -30.313239844108466
+}</pre></td></tr><tr><td>TD</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.0375561,
+    &quot;lon&quot;: 2.2072694
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 688526.9,
+  &quot;northing&quot;: 246118.56,
+  &quot;tvd&quot;: 1601.85
+}</pre></td><td><pre>{
+  &quot;x&quot;: 688498.798458593,
+  &quot;y&quot;: 246088.2467601559
+}</pre></td><td><pre>{
+  &quot;d&quot;: 41.33508363725649,
+  &quot;d_tvd&quot;: 2.2737367544323206e-13,
+  &quot;dx&quot;: -28.101541407057084,
+  &quot;dy&quot;: -30.313239844108466
+}</pre></td></tr></tbody></table></details></td></tr><tr><td>5500</td><td>wells-5507_wellB</td><td>Wells 5507 wellB</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.03,
+    &quot;geographic&quot;: 3e-07
+  }
+}</pre></td></tr><tr><td>5500</td><td>wells-5508_wellD</td><td>Wells 5508 wellD</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre></td></tr><tr><td>5500</td><td>wells-5509_wellG</td><td>Wells 5509 wellG</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td>Wells dataset mismatches (BNG proxy + inferred vertical shift)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  },
+  &quot;issues&quot;: [
+    &quot;3 failures&quot;
+  ]
+}</pre><details><summary>Case breakdown (4)</summary><table><thead><tr><th>Point</th><th>Direction</th><th>Status</th><th>Payload</th><th>Expected</th><th>Actual</th><th>Δ / Error</th></tr></thead><tbody><tr><td>RT</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2546608,
+    &quot;lon&quot;: 3.1690897
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 752588.07,
+  &quot;northing&quot;: 274547.92,
+  &quot;tvd&quot;: -10.0
+}</pre></td><td><pre>{
+  &quot;x&quot;: 752689.666369291,
+  &quot;y&quot;: 274471.18049088144
+}</pre></td><td><pre>{
+  &quot;d&quot;: 127.32153986220736,
+  &quot;d_tvd&quot;: 0.0,
+  &quot;dx&quot;: 101.59636929107364,
+  &quot;dy&quot;: -76.73950911854627
+}</pre></td></tr><tr><td>Mud line (WRP)</td><td>FORWARD</td><td style='color:#424242; font-weight:bold'>SKIP</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2546608,
+    &quot;lon&quot;: 3.1690897
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>null</pre></td><td><pre>{
+  &quot;x&quot;: 752689.666369291,
+  &quot;y&quot;: 274471.18049088144
+}</pre></td><td><pre>{}</pre></td></tr><tr><td>Horizon 1</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2546608,
+    &quot;lon&quot;: 3.1690897
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 752588.07,
+  &quot;northing&quot;: 274547.92,
+  &quot;tvd&quot;: 2025.45
+}</pre></td><td><pre>{
+  &quot;x&quot;: 752689.666369291,
+  &quot;y&quot;: 274471.18049088144
+}</pre></td><td><pre>{
+  &quot;d&quot;: 127.32153986220736,
+  &quot;d_tvd&quot;: 0.0,
+  &quot;dx&quot;: 101.59636929107364,
+  &quot;dy&quot;: -76.73950911854627
+}</pre></td></tr><tr><td>TD</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2546608,
+    &quot;lon&quot;: 3.1690897
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 752588.07,
+  &quot;northing&quot;: 274547.92,
+  &quot;tvd&quot;: 2212.73
+}</pre></td><td><pre>{
+  &quot;x&quot;: 752689.666369291,
+  &quot;y&quot;: 274471.18049088144
+}</pre></td><td><pre>{
+  &quot;d&quot;: 127.32153986220736,
+  &quot;d_tvd&quot;: 0.0,
+  &quot;dx&quot;: 101.59636929107364,
+  &quot;dy&quot;: -76.73950911854627
+}</pre></td></tr></tbody></table></details></td></tr><tr><td>5500</td><td>wells-5510_wellXNE</td><td>Wells 5510 wellXNE</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre><details><summary>Case breakdown (1)</summary><table><thead><tr><th>Point</th><th>Direction</th><th>Status</th><th>Payload</th><th>Expected</th><th>Actual</th><th>Δ / Error</th></tr></thead><tbody><tr><td>RT (WRP)</td><td>FORWARD</td><td style='color:#424242; font-weight:bold'>SKIP</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2855403,
+    &quot;lon&quot;: 2.8231747
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>null</pre></td><td><pre>{
+  &quot;x&quot;: 728873.2710008698,
+  &quot;y&quot;: 276271.9386872512
+}</pre></td><td><pre>{}</pre></td></tr></tbody></table></details></td></tr><tr><td>5500</td><td>wells-5510_wellXNH</td><td>Wells 5510 wellXNH</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre><details><summary>Case breakdown (1)</summary><table><thead><tr><th>Point</th><th>Direction</th><th>Status</th><th>Payload</th><th>Expected</th><th>Actual</th><th>Δ / Error</th></tr></thead><tbody><tr><td>RT (WRP)</td><td>FORWARD</td><td style='color:#424242; font-weight:bold'>SKIP</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2855842,
+    &quot;lon&quot;: 2.8232311
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>null</pre></td><td><pre>{
+  &quot;x&quot;: 728876.7887748125,
+  &quot;y&quot;: 276277.0733647932
+}</pre></td><td><pre>{}</pre></td></tr></tbody></table></details></td></tr><tr><td>5500</td><td>wells-5511_wellYNC</td><td>Wells 5511 wellYNC</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre></td></tr><tr><td>5500</td><td>wells-5511_wellYNF</td><td>Wells 5511 wellYNF</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre></td></tr><tr><td>5500</td><td>wells-5512_wellXSJ</td><td>Wells 5512 wellXSJ</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre><details><summary>Case breakdown (1)</summary><table><thead><tr><th>Point</th><th>Direction</th><th>Status</th><th>Payload</th><th>Expected</th><th>Actual</th><th>Δ / Error</th></tr></thead><tbody><tr><td>RT (WRP)</td><td>FORWARD</td><td style='color:#424242; font-weight:bold'>SKIP</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: -52.2855428,
+    &quot;lon&quot;: 141.1768253
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>null</pre></td><td><pre>{
+  &quot;x&quot;: 2856591.8277956266,
+  &quot;y&quot;: -19064677.062565956
+}</pre></td><td><pre>{}</pre></td></tr></tbody></table></details></td></tr><tr><td>5500</td><td>wells-5512_wellXSK</td><td>Wells 5512 wellXSK</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td>Exception: could not convert string to float: &#x27;Mud Line&#x27;</td></tr><tr><td>5500</td><td>wells-5513_wellYSL</td><td>Wells 5513 wellYSL</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre></td></tr><tr><td>5500</td><td>wells-5513_wellYSM</td><td>Wells 5513 wellYSM</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre></td></tr><tr><td>5500</td><td>wells-5514_wellXNE</td><td>Wells 5514 wellXNE</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre><details><summary>Case breakdown (1)</summary><table><thead><tr><th>Point</th><th>Direction</th><th>Status</th><th>Payload</th><th>Expected</th><th>Actual</th><th>Δ / Error</th></tr></thead><tbody><tr><td>RT (WRP)</td><td>FORWARD</td><td style='color:#424242; font-weight:bold'>SKIP</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2855403,
+    &quot;lon&quot;: 2.8231747
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>null</pre></td><td><pre>{
+  &quot;x&quot;: 728873.2710008698,
+  &quot;y&quot;: 276271.9386872512
+}</pre></td><td><pre>{}</pre></td></tr></tbody></table></details></td></tr><tr><td>5500</td><td>wells-5514_wellXNH</td><td>Wells 5514 wellXNH</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre><details><summary>Case breakdown (1)</summary><table><thead><tr><th>Point</th><th>Direction</th><th>Status</th><th>Payload</th><th>Expected</th><th>Actual</th><th>Δ / Error</th></tr></thead><tbody><tr><td>RT (WRP)</td><td>FORWARD</td><td style='color:#424242; font-weight:bold'>SKIP</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2855842,
+    &quot;lon&quot;: 2.8232311
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>null</pre></td><td><pre>{
+  &quot;x&quot;: 728876.7887748125,
+  &quot;y&quot;: 276277.0733647932
+}</pre></td><td><pre>{}</pre></td></tr></tbody></table></details></td></tr><tr><td>5500</td><td>wells-5515_wellD</td><td>Wells 5515 wellD</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre></td></tr><tr><td>5500</td><td>wells-5515_wellYNC</td><td>Wells 5515 wellYNC</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre></td></tr><tr><td>5500</td><td>wells-5515_wellYNF</td><td>Wells 5515 wellYNF</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre></td></tr><tr><td>5500</td><td>wells-5516_wellG</td><td>Wells 5516 wellG</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td>Wells dataset mismatches (BNG proxy + inferred vertical shift)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  },
+  &quot;issues&quot;: [
+    &quot;3 failures&quot;
+  ]
+}</pre><details><summary>Case breakdown (4)</summary><table><thead><tr><th>Point</th><th>Direction</th><th>Status</th><th>Payload</th><th>Expected</th><th>Actual</th><th>Δ / Error</th></tr></thead><tbody><tr><td>RT</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2546608,
+    &quot;lon&quot;: 3.1690897
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 752588.07,
+  &quot;northing&quot;: 274547.92,
+  &quot;tvd&quot;: -10.0
+}</pre></td><td><pre>{
+  &quot;x&quot;: 752689.666369291,
+  &quot;y&quot;: 274471.18049088144
+}</pre></td><td><pre>{
+  &quot;d&quot;: 127.32153986220736,
+  &quot;d_tvd&quot;: 0.0,
+  &quot;dx&quot;: 101.59636929107364,
+  &quot;dy&quot;: -76.73950911854627
+}</pre></td></tr><tr><td>Mud line (WRP)</td><td>FORWARD</td><td style='color:#424242; font-weight:bold'>SKIP</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2546608,
+    &quot;lon&quot;: 3.1690897
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>null</pre></td><td><pre>{
+  &quot;x&quot;: 752689.666369291,
+  &quot;y&quot;: 274471.18049088144
+}</pre></td><td><pre>{}</pre></td></tr><tr><td>Horizon 1</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2546608,
+    &quot;lon&quot;: 3.1690897
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 752588.07,
+  &quot;northing&quot;: 274547.92,
+  &quot;tvd&quot;: 2025.45
+}</pre></td><td><pre>{
+  &quot;x&quot;: 752689.666369291,
+  &quot;y&quot;: 274471.18049088144
+}</pre></td><td><pre>{
+  &quot;d&quot;: 127.32153986220736,
+  &quot;d_tvd&quot;: 0.0,
+  &quot;dx&quot;: 101.59636929107364,
+  &quot;dy&quot;: -76.73950911854627
+}</pre></td></tr><tr><td>TD</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.2546608,
+    &quot;lon&quot;: 3.1690897
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 752588.07,
+  &quot;northing&quot;: 274547.92,
+  &quot;tvd&quot;: 2212.73
+}</pre></td><td><pre>{
+  &quot;x&quot;: 752689.666369291,
+  &quot;y&quot;: 274471.18049088144
+}</pre></td><td><pre>{
+  &quot;d&quot;: 127.32153986220736,
+  &quot;d_tvd&quot;: 0.0,
+  &quot;dx&quot;: 101.59636929107364,
+  &quot;dy&quot;: -76.73950911854627
+}</pre></td></tr></tbody></table></details></td></tr><tr><td>5500</td><td>wells-5517_wellB</td><td>Wells 5517 wellB</td><td style='color:#6d6d6d; font-weight:bold'>SKIP</td><td>Wells dataset skipped (insufficient expectations)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  }
+}</pre></td></tr><tr><td>5500</td><td>wells-5526_wellA</td><td>Wells 5526 wellA</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td>Wells dataset mismatches (BNG proxy + inferred vertical shift)<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian&quot;: 0.1,
+    &quot;geographic&quot;: 1e-06
+  },
+  &quot;issues&quot;: [
+    &quot;3 failures&quot;
+  ]
+}</pre><details><summary>Case breakdown (4)</summary><table><thead><tr><th>Point</th><th>Direction</th><th>Status</th><th>Payload</th><th>Expected</th><th>Actual</th><th>Δ / Error</th></tr></thead><tbody><tr><td>RT</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.0375561,
+    &quot;lon&quot;: 2.2072694
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 688526.9,
+  &quot;northing&quot;: 246118.56,
+  &quot;tvd&quot;: -76.67
+}</pre></td><td><pre>{
+  &quot;x&quot;: 688498.798458593,
+  &quot;y&quot;: 246088.2467601559
+}</pre></td><td><pre>{
+  &quot;d&quot;: 41.33508363725649,
+  &quot;d_tvd&quot;: 0.0,
+  &quot;dx&quot;: -28.101541407057084,
+  &quot;dy&quot;: -30.313239844108466
+}</pre></td></tr><tr><td>Ground level (WRP)</td><td>FORWARD</td><td style='color:#424242; font-weight:bold'>SKIP</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.0375561,
+    &quot;lon&quot;: 2.2072694
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>null</pre></td><td><pre>{
+  &quot;x&quot;: 688498.798458593,
+  &quot;y&quot;: 246088.2467601559
+}</pre></td><td><pre>{}</pre></td></tr><tr><td>Horizon 1</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.0375561,
+    &quot;lon&quot;: 2.2072694
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 688526.9,
+  &quot;northing&quot;: 246118.56,
+  &quot;tvd&quot;: 783.59
+}</pre></td><td><pre>{
+  &quot;x&quot;: 688498.798458593,
+  &quot;y&quot;: 246088.2467601559
+}</pre></td><td><pre>{
+  &quot;d&quot;: 41.33508363725649,
+  &quot;d_tvd&quot;: -1.1368683772161603e-13,
+  &quot;dx&quot;: -28.101541407057084,
+  &quot;dy&quot;: -30.313239844108466
+}</pre></td></tr><tr><td>TD</td><td>FORWARD</td><td style='color:#c62828; font-weight:bold'>FAIL</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 52.0375561,
+    &quot;lon&quot;: 2.2072694
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>{
+  &quot;easting&quot;: 688526.9,
+  &quot;northing&quot;: 246118.56,
+  &quot;tvd&quot;: 1601.85
+}</pre></td><td><pre>{
+  &quot;x&quot;: 688498.798458593,
+  &quot;y&quot;: 246088.2467601559
+}</pre></td><td><pre>{
+  &quot;d&quot;: 41.33508363725649,
+  &quot;d_tvd&quot;: 2.2737367544323206e-13,
+  &quot;dx&quot;: -28.101541407057084,
+  &quot;dy&quot;: -30.313239844108466
+}</pre></td></tr></tbody></table></details></td></tr><tr><td>5200</td><td>via-demo</td><td>Via transformation demo (4326→4277→27700)</td><td style='color:#2e7d32; font-weight:bold'>PASS</td><td>Via demo within tolerance<br><pre>{
+  &quot;tolerances&quot;: {
+    &quot;cartesian_m&quot;: 2.0
+  }
+}</pre><details><summary>Case breakdown (2)</summary><table><thead><tr><th>Point</th><th>Direction</th><th>Status</th><th>Payload</th><th>Expected</th><th>Actual</th><th>Δ / Error</th></tr></thead><tbody><tr><td>via-demo-01</td><td>FORWARD</td><td style='color:#2e7d32; font-weight:bold'>PASS</td><td><pre>{
+  &quot;position&quot;: {
+    &quot;lat&quot;: 55.9533,
+    &quot;lon&quot;: -3.1883
+  },
+  &quot;source_crs&quot;: &quot;EPSG:4326&quot;,
+  &quot;target_crs&quot;: &quot;EPSG:27700&quot;
+}</pre></td><td><pre>null</pre></td><td><pre>{
+  &quot;x&quot;: 325897.3206624691,
+  &quot;y&quot;: 674001.7422646028
+}</pre></td><td><pre>null</pre></td></tr><tr><td>via-demo-01</td><td>FORWARD</td><td style='color:#2e7d32; font-weight:bold'>PASS</td><td><pre>{
+  &quot;path&quot;: [
+    &quot;EPSG:4326&quot;,
+    &quot;EPSG:4277&quot;,
+    &quot;EPSG:27700&quot;
+  ],
+  &quot;position&quot;: {
+    &quot;lat&quot;: 55.9533,
+    &quot;lon&quot;: -3.1883
+  },
+  &quot;segment_path_ids&quot;: [
+    null,
+    null
+  ]
+}</pre></td><td><pre>{
+  &quot;x&quot;: 325897.3206624691,
+  &quot;y&quot;: 674001.7422646028
+}</pre></td><td><pre>{
+  &quot;x&quot;: 325897.3206624691,
+  &quot;y&quot;: 674001.7422646035
+}</pre></td><td><pre>{
+  &quot;d_m&quot;: 6.984919309616089e-10,
+  &quot;dx_m&quot;: 0.0,
+  &quot;dy_m&quot;: 6.984919309616089e-10
+}</pre></td></tr></tbody></table></details></td></tr>
     </tbody>
   </table>
 </body>

@@ -40,6 +40,19 @@ Content-Type: application/json
 }
 ```
 
+### Optional: Deterministic path selection
+Use either a `path_id` (index from `/api/transform/available-paths`) or provide `preferred_ops` as a list of substrings to match a specific operation method/pipeline.
+
+```json
+{
+  "source_crs": "EPSG:4326",
+  "target_crs": "EPSG:4277",
+  "position": {"lon": -3.1883, "lat": 55.9533},
+  "path_id": 2,
+  "preferred_ops": ["Position Vector", "NTv2"]
+}
+```
+
 ## Response
 ```json
 {
