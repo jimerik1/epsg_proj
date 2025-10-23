@@ -1,65 +1,47 @@
-### Phase 1: Environment Setup
-- [ ] Initialize project structure with all directories
-- [ ] Create Docker configuration for backend (Python 3.11 + PyProj)
-- [ ] Create Docker configuration for frontend (Node.js + React)
-- [ ] Set up docker-compose.yml with hot-reload for development
-- [ ] Configure .gitignore and .dockerignore files
-- [ ] Create requirements.txt with pyproj, fastapi, uvicorn, redis, pydantic, numpy
-- [ ] Test Docker setup with `docker-compose up --build`
+# Project Status – October 2025
 
-### Phase 2: Backend Core Services with PyProj
-- [ ] Initialize FastAPI application with CORS middleware
-- [ ] Create PyProj transformer service class
-- [ ] Implement TransformerGroup for finding all transformation paths
-- [ ] Create CRS unit detection using pyproj.CRS.axis_info
-- [ ] Implement vertical/compound CRS support
-- [ ] Build custom CRS parser for XML-style definitions to PROJ string
-- [ ] Create grid convergence calculator using get_factors()
-- [ ] Create scale factor calculator
-- [ ] Implement transformation accuracy extractor
-- [ ] Set up Redis caching for transformation results
-- [ ] Configure PROJ_NETWORK=ON for automatic grid download
+## Where Things Stand
+- **Backend & Frontend**: Core CRS matching, transformation, custom CRS, and local-offset comparison pages are live. Map plotting, tooltip help, and multi-tab custom CRS builders are in place.
+- **GIGS Harness**: Manual runner exercises Series 5100 conversions and Series 5200 transformations. Reports (HTML + JSON + Tailwind viewer) capture tolerances, payloads, and per-row deltas.
+- **Docs**: README lists all API endpoints with per-endpoint markdown in `docs/`. Geodetic workflow notes live in `epsg_proj/geodetic_workflow.md`.
 
-### Phase 3: Core Transformation Endpoints
-- [ ] POST /api/transform/direct
-- [ ] POST /api/transform/via
-- [ ] POST /api/transform/custom
-- [ ] POST /api/transform/trajectory
+## Test Coverage Snapshot
+- **Pass**: Series 5100, Series 5200 tests `tfm-5201`, `tfm-5204`, `tfm-5206`, `tfm-5208` align with GIGS reference values.
+- **Skip (pending features)**: `tfm-5209`–`tfm-5212` require user-defined CRS/bin-grid support. Local offset (Series 5300/5400/5500) parser not implemented.
+- **Fail (needs backend capability)**:
+  - `tfm-5203` Position Vector (EPSG 1037) – API returns identity; needs proper 7-parameter WGS84↔OSGB36 pipeline.
+  - `tfm-5205` Molodensky-Badekas – centimetre-level deltas; likely pipeline/rounding mismatch.
+  - `tfm-5207` NTv2 – grid application missing (values come back unshifted).
+  - `tfm-5213` Geo 2D three-translation – API cannot reproduce EPSG concatenated/Abridged Molodensky outputs.
 
-### Phase 4: Metadata & Analysis Endpoints
-- [ ] GET /api/crs/units/{epsg_code}
-- [ ] GET /api/transform/accuracy
-- [ ] GET /api/transform/available-paths
-- [ ] POST /api/crs/match
-- [ ] POST /api/calculate/grid-convergence
-- [ ] POST /api/calculate/scale-factor
-- [ ] GET /api/crs/search
+## What’s Missing Backend-Side
+1. **Transformation Pipelines**
+   - Ship explicit PROJ pipelines or notebooks that match GIGS definitions (e.g. OSGB36 ↔ WGS84 via Helmert params, NTv2 grid loading).
+   - Ensure `/api/transform/direct` selects the same path the tests expect (maybe via `preferred_ops`).
+2. **User-Defined CRS / Bin Grid**
+   - Implement minimal support for GIGS “bin grid” & seismic CRS definitions so Series 5209–5212 can run (likely separate endpoint or expanded parsing).
+3. **Series 5300/5400/5500 Parser**
+   - Build data loaders for the seismic & well ASCII/P-files, reuse helper scaffolds, and extend the manual runner.
 
-### Phase 5: Custom CRS Definition Handler
-- [ ] Parse XML format (CD_GEO_SYSTEM, CD_GEO_ZONE, CD_GEO_DATUM, CD_GEO_ELLIPSOID)
-- [ ] Convert to PROJ string format
-- [ ] Support vertical datum in custom definitions
-- [ ] Validate using CRS.from_proj4() or CRS.from_wkt()
-- [ ] Cache parsed definitions in Redis
+## Next Possible Steps
+1. **Address failing Series 5200 datasets**
+   - Load required grid files (NTv2, NADCON) and configure PROJ data path.
+   - Add deterministic pipeline selection (pyproj `TransformerGroup`, custom operation choice).
+2. **Implement user-defined CRS handling**
+   - Parse P6/P111 bin-grid configurations; expose API to register these temporary CRSs.
+   - Update `/api/transform/direct` to accept session-specific CRS definitions.
+3. **Complete remaining GIGS suites**
+   - Parser + harness for Series 3200 (user-defined) using metadata already in repo.
+   - Implement 5300/5400/5500 local-offset/trajectory comparisons (hooks already stubbed).
+4. **Automation & CI**
+   - Convert manual runner into pytest-integrated suite; optionally add GitHub Actions job that spins up backend and posts the HTML/JSON artifacts.
+5. **Frontend Enhancements**
+   - Surface failing/passing GIGS stats inside the Tailwind report app.
+   - Add UI toggles for choosing PROJ pipelines (once backend supports them).
 
-### Phase 6: Frontend Demo GUI
-- [ ] Set up React application with Material-UI or Ant Design
-- [ ] Create main layout with input/output panels
-- [ ] Implement CRS selector with EPSG search
-- [ ] Add custom CRS definition editor with XML syntax
-- [ ] Create position input (DD, DMS, projected coordinates)
-- [ ] Add trajectory input component for batch transformations
-- [ ] Integrate Leaflet map with position markers
-- [ ] Display transformation results with units
-- [ ] Show accuracy information and available paths
-- [ ] Display grid convergence and scale factor
-- [ ] Add export functionality (CSV, JSON)
+## Useful Files & Commands
+- Manual harness: `python3 tests/gigs/run_manual.py`
+- Reports: `tests/gigs/gigs_manual_report.html`, `tests/gigs/gigs_manual_report.json`, `tests/gigs/report_app/index.html`
+- Reference datasets: `docs/standards/GIGS_Test_Dataset_v2.1/`
 
-### Phase 7: Testing & Error Handling
-- [ ] Write pytest tests for all transformations
-- [ ] Test known transformation pairs (WGS84/UTM, ED50/WGS84, etc.)
-- [ ] Test vertical transformations with known points
-- [ ] Add error handling for invalid CRS codes
-- [ ] Handle transformation failures gracefully
-- [ ] Test custom CRS definitions
-
+Keep this file in sync when new datasets or backend features land so the next Codex session can pick up instantly.

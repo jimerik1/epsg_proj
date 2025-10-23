@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GIGS Test Explorer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    summary::-webkit-details-marker { display: none; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <main class="max-w-6xl mx-auto px-4 py-8">
+    <header class="mb-10">
+      <h1 class="text-3xl font-semibold text-white">GIGS Test Explorer</h1>
+      <p class="text-slate-400 mt-2">Interactive overview of the latest manual run. Data is read from <code class="text-emerald-300">tests/gigs/gigs_manual_report.json</code>.</p>
+      <p id="generated" class="text-sm text-slate-500 mt-1"></p>
+    </header>
+
+    <section id="summary" class="grid gap-4 sm:grid-cols-3 mb-10"></section>
+
+    <section>
+      <h2 class="text-2xl font-semibold text-white mb-4">Test Suites</h2>
+      <div id="tests" class="space-y-4"></div>
+    </section>
+  </main>
+
+  <template id="case-row-template">
+    <tr class="border-b border-slate-800">
+      <td class="whitespace-nowrap px-3 py-2 text-sm font-medium text-slate-200 point"></td>
+      <td class="whitespace-nowrap px-3 py-2 text-sm text-slate-300 direction"></td>
+      <td class="whitespace-nowrap px-3 py-2 text-sm font-semibold status"></td>
+      <td class="px-3 py-2 text-xs text-slate-300 message"></td>
+      <td class="px-3 py-2 text-xs text-slate-200">
+        <pre class="overflow-x-auto max-h-40 whitespace-pre-wrap payload"></pre>
+      </td>
+      <td class="px-3 py-2 text-xs text-slate-200">
+        <pre class="overflow-x-auto max-h-40 whitespace-pre-wrap expected"></pre>
+      </td>
+      <td class="px-3 py-2 text-xs text-slate-200">
+        <pre class="overflow-x-auto max-h-40 whitespace-pre-wrap actual"></pre>
+      </td>
+      <td class="px-3 py-2 text-xs text-slate-200">
+        <pre class="overflow-x-auto max-h-40 whitespace-pre-wrap delta"></pre>
+      </td>
+    </tr>
+  </template>
+
+  <script>
+    const STATUS_COLORS = {
+      PASS: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/60',
+      FAIL: 'bg-rose-500/20 text-rose-300 border-rose-500/60',
+      SKIP: 'bg-slate-500/20 text-slate-300 border-slate-500/60',
+    };
+
+    function formatStatus(status) {
+      const upper = (status || '').toUpperCase();
+      const base = STATUS_COLORS[upper] || 'bg-slate-500/20 text-slate-300 border-slate-500/60';
+      return `<span class="inline-flex items-center px-2 py-0.5 rounded-full border ${base}">${upper || 'UNKNOWN'}</span>`;
+    }
+
+    function createSummaryCards(tests) {
+      const counts = tests.reduce((acc, test) => {
+        const status = (test.status || 'UNKNOWN').toUpperCase();
+        acc[status] = (acc[status] || 0) + 1;
+        acc.TOTAL += 1;
+        return acc;
+      }, { TOTAL: 0 });
+
+      const summaryEl = document.getElementById('summary');
+      summaryEl.innerHTML = '';
+
+      const cards = [
+        { label: 'Total', value: counts.TOTAL, ring: 'border-slate-400/40 text-slate-200' },
+        { label: 'Pass', value: counts.PASS || 0, ring: 'border-emerald-500/40 text-emerald-300' },
+        { label: 'Fail', value: counts.FAIL || 0, ring: 'border-rose-500/40 text-rose-400' },
+        { label: 'Skip', value: counts.SKIP || 0, ring: 'border-slate-600/40 text-slate-400' },
+      ];
+
+      cards.forEach(card => {
+        const div = document.createElement('div');
+        div.className = `rounded-xl border ${card.ring} bg-slate-900/40 px-4 py-5 shadow-sm flex flex-col gap-1`;
+        div.innerHTML = `<span class="text-sm uppercase tracking-wide text-slate-400">${card.label}</span>` +
+                        `<span class="text-3xl font-semibold">${card.value}</span>`;
+        summaryEl.appendChild(div);
+      });
+    }
+
+    function renderCases(container, cases = []) {
+      if (!cases.length) {
+        const empty = document.createElement('p');
+        empty.className = 'text-sm text-slate-400 italic';
+        empty.textContent = 'No case data available.';
+        container.appendChild(empty);
+        return;
+      }
+
+      const table = document.createElement('table');
+      table.className = 'min-w-full divide-y divide-slate-800 text-left text-xs text-slate-200';
+      table.innerHTML = `
+        <thead class="bg-slate-900/70 text-slate-300 uppercase tracking-wide">
+          <tr>
+            <th class="px-3 py-2">Point</th>
+            <th class="px-3 py-2">Direction</th>
+            <th class="px-3 py-2">Status</th>
+            <th class="px-3 py-2">Notes</th>
+            <th class="px-3 py-2">Payload</th>
+            <th class="px-3 py-2">Expected</th>
+            <th class="px-3 py-2">Actual</th>
+            <th class="px-3 py-2">Δ / Error</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-900/60"></tbody>
+      `;
+
+      const tbody = table.querySelector('tbody');
+      const rowTemplate = document.getElementById('case-row-template');
+
+      cases.forEach(caseItem => {
+        const clone = rowTemplate.content.firstElementChild.cloneNode(true);
+        clone.querySelector('.point').textContent = caseItem.point ?? '';
+        clone.querySelector('.direction').textContent = caseItem.direction ?? '';
+        const statusEl = clone.querySelector('.status');
+        statusEl.innerHTML = (caseItem.status || '').toUpperCase();
+        statusEl.className = `whitespace-nowrap px-3 py-2 text-sm font-semibold ${STATUS_COLORS[(caseItem.status || '').toUpperCase()] || STATUS_COLORS.SKIP}`;
+        clone.querySelector('.message').textContent = caseItem.message ?? '';
+        clone.querySelector('.payload').textContent = JSON.stringify(caseItem.payload, null, 2);
+        clone.querySelector('.expected').textContent = JSON.stringify(caseItem.expected, null, 2);
+        clone.querySelector('.actual').textContent = JSON.stringify(caseItem.actual, null, 2);
+        clone.querySelector('.delta').textContent = JSON.stringify(caseItem.delta, null, 2);
+        tbody.appendChild(clone);
+      });
+
+      container.appendChild(table);
+    }
+
+    function renderTests(tests) {
+      const container = document.getElementById('tests');
+      container.innerHTML = '';
+
+      const groups = tests.reduce((acc, test) => {
+        const key = test.series || 'Other';
+        (acc[key] = acc[key] || []).push(test);
+        return acc;
+      }, {});
+
+      Object.keys(groups).sort().forEach(series => {
+        const groupWrapper = document.createElement('section');
+        groupWrapper.className = 'space-y-4';
+
+        const title = document.createElement('h3');
+        title.className = 'text-xl font-semibold text-white pt-6';
+        title.textContent = `Series ${series}`;
+        groupWrapper.appendChild(title);
+
+        groups[series].forEach(test => {
+          const details = document.createElement('details');
+          details.className = 'rounded-xl border border-slate-800 bg-slate-900/50 shadow-sm';
+
+          const summary = document.createElement('summary');
+          summary.className = 'flex cursor-pointer items-center justify-between gap-4 px-4 py-3 hover:bg-slate-900/70';
+        summary.innerHTML = `
+          <div>
+            <p class="text-sm uppercase tracking-wide text-slate-500">Series ${test.series}</p>
+            <p class="text-lg font-semibold text-white">${test.id} — ${test.description}</p>
+          </div>
+          <div>
+            ${formatStatus(test.status)}
+          </div>
+        `;
+        details.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.className = 'px-5 pb-5 pt-3 space-y-4';
+
+        const message = document.createElement('p');
+        message.className = 'text-sm text-slate-200';
+        message.textContent = test.message;
+        body.appendChild(message);
+
+        if (test.details) {
+          if (test.details.tolerances) {
+            const tol = document.createElement('div');
+            tol.className = 'text-xs text-slate-400 grid gap-1 sm:grid-cols-2 lg:grid-cols-4';
+            Object.entries(test.details.tolerances).forEach(([key, value]) => {
+              if (value === null || value === undefined) { return; }
+              const badge = document.createElement('div');
+              badge.className = 'bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-2';
+              badge.innerHTML = `<span class="text-slate-500 uppercase tracking-wide text-[10px]">${key.replace(/_/g, ' ')}</span><div class="text-slate-200 text-sm">${value}</div>`;
+              tol.appendChild(badge);
+            });
+            if (tol.childElementCount) {
+              const tolHeader = document.createElement('h4');
+              tolHeader.className = 'text-sm font-semibold text-slate-300';
+              tolHeader.textContent = 'Tolerances';
+              body.appendChild(tolHeader);
+              body.appendChild(tol);
+            }
+          }
+
+          if (Array.isArray(test.details.issues) && test.details.issues.length) {
+            const issues = document.createElement('div');
+            issues.className = 'rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3';
+            issues.innerHTML = `<h4 class="text-sm font-semibold text-amber-300 mb-1">Issues</h4>` +
+              `<ul class="list-disc pl-5 text-xs text-amber-200 space-y-1"></ul>`;
+            const list = issues.querySelector('ul');
+            test.details.issues.forEach(issue => {
+              const li = document.createElement('li');
+              li.textContent = issue;
+              list.appendChild(li);
+            });
+            body.appendChild(issues);
+          }
+
+          if (Array.isArray(test.details.cases)) {
+            const casesWrapper = document.createElement('div');
+            casesWrapper.className = 'space-y-2';
+            const header = document.createElement('h4');
+            header.className = 'text-sm font-semibold text-slate-300';
+            header.textContent = `Cases (${test.details.cases.length})`;
+            casesWrapper.appendChild(header);
+            renderCases(casesWrapper, test.details.cases);
+            body.appendChild(casesWrapper);
+          }
+        }
+
+          details.appendChild(body);
+          groupWrapper.appendChild(details);
+        });
+
+        container.appendChild(groupWrapper);
+      });
+    }
+
+    async function init() {
+      try {
+        const response = await fetch('../gigs_manual_report.json', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Failed to load JSON: ${response.status}`);
+        const data = await response.json();
+
+        document.getElementById('generated').textContent = `Generated: ${data.generated || 'unknown'}`;
+        createSummaryCards(data.tests || []);
+        renderTests(data.tests || []);
+      } catch (error) {
+        console.error(error);
+        const container = document.getElementById('tests');
+        container.innerHTML = `<div class="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">${error}</div>`;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
