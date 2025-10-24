@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import requests
 from requests import HTTPError
+from pyproj import CRS
 
 if __package__ is None:  # allow running as `python tests/gigs/run_manual.py`
     sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -33,6 +34,10 @@ API_ROOT = "http://localhost:3001"
 DATA_ROOT = Path("docs/standards/GIGS_Test_Dataset_v2.1")
 HTML_REPORT = Path("tests/gigs/gigs_manual_report.html")
 JSON_REPORT = Path("tests/gigs/gigs_manual_report.json")
+
+GIGS_OSGB36_3D = "GIGS:OSGB36_3D"
+GIGS_AMERSFOORT_3D = "GIGS:AMERSFOORT_3D"
+ETRS89_3D = "EPSG:4937"
 
 
 @dataclasses.dataclass
@@ -62,6 +67,8 @@ def _call_json(session: requests.Session, method: str, url: str, **kwargs) -> Di
     return response.json()
 
 
+
+
 def _pick_epsg(mapper: Dict[str, Optional[str]], candidates: Iterable[str]) -> Optional[str]:
     for prefix in candidates:
         for key, value in mapper.items():
@@ -87,6 +94,53 @@ def _get_value(row: Dict[str, Any], column: Optional[str]) -> Optional[float]:
         return to_float(value)
     except Exception:
         return None
+
+
+def _canonical_crs_label(crs_code: Optional[str]) -> Optional[str]:
+    if not crs_code:
+        return None
+    label = crs_code.strip()
+    if label in {GIGS_OSGB36_3D, GIGS_AMERSFOORT_3D, ETRS89_3D}:
+        return label
+    try:
+        crs = CRS.from_user_input(label)
+        authority = crs.to_authority()
+        if authority:
+            return f"{authority[0]}:{authority[1]}"
+    except Exception:
+        pass
+    return label or None
+
+
+def _apply_path_overrides(
+    payload: Dict[str, Any],
+    dataset_name: str,
+    variant: str,
+    source_crs: Optional[str],
+    target_crs: Optional[str],
+    direction: str,
+) -> None:
+    canonical_source = _canonical_crs_label(source_crs)
+    canonical_target = _canonical_crs_label(target_crs)
+    if not canonical_source or not canonical_target:
+        return
+
+    overrides = TRANSFORMATION_PATH_OVERRIDES.get(dataset_name)
+    if not overrides:
+        return
+    variant_overrides = overrides.get(variant) or overrides.get("default")
+    if not variant_overrides:
+        return
+
+    hint = variant_overrides.get((canonical_source, canonical_target, direction))
+    if not hint:
+        return
+
+    if "path_id" in hint and hint["path_id"] is not None:
+        payload["path_id"] = hint["path_id"]
+    preferred_ops = hint.get("preferred_ops")
+    if preferred_ops:
+        payload["preferred_ops"] = preferred_ops
 
 
 def _extract_geo_sets(table) -> List[GeoColumns]:
@@ -232,6 +286,104 @@ class OutputSet:
     epsg_codes: Dict[str, Optional[str]]
     geo_sets: List[GeoColumns]
     geocen_sets: List[GeocentricColumns]
+
+
+TRANSFORMATION_VARIANT_CRS_OVERRIDES: Dict[str, Dict[str, Dict[str, str]]] = {
+    "GIGS_tfm_5203_PosVec": {
+        "part2": {"geo_alias": GIGS_OSGB36_3D},
+    },
+    "GIGS_tfm_5205_MolBad": {
+        "part2": {"geo_alias": GIGS_AMERSFOORT_3D},
+    },
+}
+
+
+TRANSFORMATION_PATH_OVERRIDES: Dict[
+    str,
+    Dict[str, Dict[Tuple[str, str, str], Dict[str, object]]],
+] = {
+    "GIGS_tfm_5203_PosVec": {
+        "part1": {
+            ("EPSG:4277", "EPSG:4326", "FORWARD"): {
+                "preferred_ops": [
+                    "position vector",
+                    "osgb36 to wgs 84 (6)",
+                ]
+            },
+            ("EPSG:4326", "EPSG:4277", "REVERSE"): {
+                "preferred_ops": [
+                    "position vector",
+                    "inverse of osgb36 to wgs 84 (6)",
+                ]
+            },
+        },
+        "part2": {
+            (GIGS_OSGB36_3D, "EPSG:4979", "FORWARD"): {},
+            ("EPSG:4979", GIGS_OSGB36_3D, "REVERSE"): {},
+        },
+    },
+    "GIGS_tfm_5207_NTv2": {
+        "part1": {
+            ("EPSG:4202", "EPSG:4283", "FORWARD"): {
+                "preferred_ops": [
+                    "horizontal_shift_gtiff",
+                    "agd66 to gda94 (11)",
+                    "ntv2",
+                ]
+            },
+            ("EPSG:4283", "EPSG:4202", "REVERSE"): {
+                "preferred_ops": [
+                    "horizontal_shift_gtiff",
+                    "agd66 to gda94 (11)",
+                    "inverse of agd66 to gda94",
+                    "ntv2",
+                ]
+            },
+        },
+        "part2": {
+            ("EPSG:4267", "EPSG:4269", "FORWARD"): {
+                "preferred_ops": [
+                    "horizontal_shift_gtiff",
+                    "nad27 to nad83",
+                    "ntv2",
+                ]
+            },
+            ("EPSG:4269", "EPSG:4267", "REVERSE"): {
+                "preferred_ops": [
+                    "horizontal_shift_gtiff",
+                    "inverse of nad27 to nad83",
+                    "ntv2",
+                ]
+            },
+        },
+    },
+    "GIGS_tfm_5213_3trnslt_Geog2D": {
+        "EPSGconcat": {
+            ("EPSG:4277", "EPSG:4326", "FORWARD"): {
+                "preferred_ops": [
+                    "geocentric translations",
+                    "osgb36 to wgs 84 (2)",
+                    "osgb36 to wgs 84 (3)",
+                ]
+            },
+            ("EPSG:4326", "EPSG:4277", "REVERSE"): {
+                "preferred_ops": [
+                    "geocentric translations",
+                    "inverse of osgb36 to wgs 84 (2)",
+                    "inverse of osgb36 to wgs 84 (3)",
+                ]
+            },
+        },
+        "AbrMol": {
+            ("EPSG:4277", "EPSG:4326", "FORWARD"): {
+                "preferred_ops": ["abridged molodensky"]
+            },
+            ("EPSG:4326", "EPSG:4277", "REVERSE"): {
+                "preferred_ops": ["abridged molodensky"]
+            },
+        },
+    },
+}
 
 
 def _parse_conversion_dataset(
@@ -397,7 +549,12 @@ def execute_conversion_dataset(
                         if height_val is not None:
                             payload["vertical_value"] = height_val
                         try:
-                            resp = _call_json(session, "POST", f"{API_ROOT}/api/transform/direct", json=payload)
+                            resp = _call_json(
+                                session,
+                                "POST",
+                                f"{API_ROOT}/api/transform/direct",
+                                json=payload,
+                            )
                         except HTTPError as exc:
                             failures.append(
                                 f"FORWARD {point} [{variant}]: HTTP {exc.response.status_code} {exc.response.text}"
@@ -441,7 +598,12 @@ def execute_conversion_dataset(
                             "position": {"x": east_val, "y": north_val},
                         }
                         try:
-                            resp = _call_json(session, "POST", f"{API_ROOT}/api/transform/direct", json=payload)
+                            resp = _call_json(
+                                session,
+                                "POST",
+                                f"{API_ROOT}/api/transform/direct",
+                                json=payload,
+                            )
                         except HTTPError as exc:
                             failures.append(
                                 f"REVERSE {point} [{variant}]: HTTP {exc.response.status_code} {exc.response.text}"
@@ -566,12 +728,24 @@ def _parse_transformation_dataset(
     for out_path in output_paths:
         output_table = parse_gigs_table(out_path)
         label = out_path.stem.split(f"{name}_output", 1)[-1].lstrip("_") or None
+        variant_key = label or "default"
+        variant_overrides = TRANSFORMATION_VARIANT_CRS_OVERRIDES.get(name, {}).get(variant_key, {})
+        geo_alias = variant_overrides.get("geo_alias")
+        if geo_alias:
+            for column, code in list(output_table.epsg_codes.items()):
+                if code:
+                    continue
+                if column.startswith("lat") or column.startswith("lon") or column.startswith("height"):
+                    output_table.epsg_codes[column] = geo_alias
         geo_sets = _extract_geo_sets(output_table)
         geocen_sets = _extract_geocen_sets(output_table)
+        if geo_alias:
+            for geo_set in geo_sets:
+                if not geo_set.code:
+                    geo_set.code = geo_alias
+
         geo_part = geo_sets[0].code if geo_sets else None
         geocen_part = geocen_sets[0].code if geocen_sets else None
-
-        variant_key = label or "default"
         for out_row in output_table.rows:
             point = out_row.get("point")
             if not point:
@@ -681,8 +855,23 @@ def execute_transformation_dataset(
                         }
                         if height_val is not None:
                             payload["vertical_value"] = height_val
+                        source_crs = geo_set.code
+                        target_crs = geocen_set.code
+                        _apply_path_overrides(
+                            payload,
+                            dataset_name,
+                            variant,
+                            source_crs,
+                            target_crs,
+                            direction,
+                        )
                         try:
-                            resp = _call_json(session, "POST", f"{API_ROOT}/api/transform/direct", json=payload)
+                            resp = _call_json(
+                                session,
+                                "POST",
+                                f"{API_ROOT}/api/transform/direct",
+                                json=payload,
+                            )
                         except HTTPError as exc:
                             failures.append(
                                 f"REVERSE {point} [{variant}]: HTTP {exc.response.status_code} {exc.response.text}"
@@ -734,8 +923,23 @@ def execute_transformation_dataset(
                             "position": {"x": x_val, "y": y_val},
                             "vertical_value": z_val,
                         }
+                        source_crs = geocen_set.code
+                        target_crs = geo_set.code
+                        _apply_path_overrides(
+                            payload,
+                            dataset_name,
+                            variant,
+                            source_crs,
+                            target_crs,
+                            direction,
+                        )
                         try:
-                            resp = _call_json(session, "POST", f"{API_ROOT}/api/transform/direct", json=payload)
+                            resp = _call_json(
+                                session,
+                                "POST",
+                                f"{API_ROOT}/api/transform/direct",
+                                json=payload,
+                            )
                         except HTTPError as exc:
                             failures.append(
                                 f"FORWARD {point} [{variant}]: HTTP {exc.response.status_code} {exc.response.text}"
@@ -803,8 +1007,23 @@ def execute_transformation_dataset(
                         }
                         if height_val is not None:
                             payload["vertical_value"] = height_val
+                        source_crs = src_set.code
+                        target_crs = dst_set.code
+                        _apply_path_overrides(
+                            payload,
+                            dataset_name,
+                            variant,
+                            source_crs,
+                            target_crs,
+                            direction,
+                        )
                         try:
-                            resp = _call_json(session, "POST", f"{API_ROOT}/api/transform/direct", json=payload)
+                            resp = _call_json(
+                                session,
+                                "POST",
+                                f"{API_ROOT}/api/transform/direct",
+                                json=payload,
+                            )
                         except HTTPError as exc:
                             failures.append(
                                 f"{direction} {point} [{variant}]: HTTP {exc.response.status_code} {exc.response.text}"
@@ -859,7 +1078,7 @@ def execute_transformation_dataset(
                 "target_crs": target_crs,
                 "payload": payload,
                 "endpoint": "POST /api/transform/direct",
-                "path_hint": "best_available",
+                "path_hint": payload.get("preferred_ops") or "best_available",
                 "path_id": None,
                 "expected": expected,
                 "actual": actual,
@@ -1041,7 +1260,12 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
             }
             endpoint = "POST /api/transform/direct"
             try:
-                resp = _call_json(session, "POST", f"{API_ROOT}/api/transform/direct", json=payload_direct)
+                resp = _call_json(
+                    session,
+                    "POST",
+                    f"{API_ROOT}/api/transform/direct",
+                    json=payload_direct,
+                )
                 actual = resp.get("map_position") or {"x": resp.get("x"), "y": resp.get("y")}
                 payload_used = payload_direct
             except HTTPError as exc2:
@@ -1084,7 +1308,12 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
                 }
                 # Do not fail if endpoint unavailable
                 try:
-                    vert = _call_json(session, "POST", f"{API_ROOT}/api/transform/vertical", json=payload_vert)
+                    vert = _call_json(
+                        session,
+                        "POST",
+                        f"{API_ROOT}/api/transform/vertical",
+                        json=payload_vert,
+                    )
                     out_depth = float(vert.get("output_value"))
                     # Convert to signed convention matching the dataset (negative TVD values)
                     calc_signed = -out_depth
