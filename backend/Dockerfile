@@ -22,6 +22,7 @@ ENV PROJ_USER_WRITABLE_DIRECTORY=/app/proj_data
 ARG GRID_FETCH=1
 RUN mkdir -p /app/proj_data && if [ "$GRID_FETCH" = "1" ]; then \
     projsync -s https://cdn.proj.org -r uk_os_OSTN15_NTv2_OSGBtoETRS.gsb -d /app/proj_data || true && \
+    projsync -s https://cdn.proj.org -r uk_os_OSTN15_NTv2_OSGBtoETRS.tif -d /app/proj_data || true && \
     projsync -s https://cdn.proj.org -r uk_os_OSGM15_GB.tif -d /app/proj_data || true ; \
   fi
 

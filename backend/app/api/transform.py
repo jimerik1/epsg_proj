@@ -102,7 +102,7 @@ async def transform_direct(request: TransformRequest):
                 request.source_crs, request.target_crs, x, y, z
             )
 
-        target_crs = CRS.from_string(request.target_crs)
+        target_crs = service._crs_from_input(request.target_crs)
 
         response = {
             "map_position": {"x": result["x"], "y": result["y"]},
@@ -121,12 +121,28 @@ async def transform_direct(request: TransformRequest):
                 lon, lat = service.to_geographic(request.target_crs, result["x"], result["y"]).values()
             except Exception:
                 lon, lat = result["x"], result["y"]
-            response["grid_convergence"] = service.calculate_grid_convergence(
-                request.target_crs, lon, lat
-            )
-            response["scale_factor"] = service.calculate_scale_factor(
-                request.target_crs, lon, lat
-            )
+            try:
+                convergence = service.calculate_grid_convergence(
+                    request.target_crs, lon, lat
+                )
+                if math.isfinite(convergence):
+                    response["grid_convergence"] = convergence
+            except Exception:
+                pass
+            try:
+                scales = service.calculate_scale_factor(
+                    request.target_crs, lon, lat
+                )
+                if isinstance(scales, dict):
+                    finite_scales = {
+                        key: value
+                        for key, value in scales.items()
+                        if isinstance(value, (int, float)) and math.isfinite(value)
+                    }
+                    if finite_scales:
+                        response["scale_factor"] = finite_scales
+            except Exception:
+                pass
 
         return response
 
@@ -142,8 +158,8 @@ async def transform_trajectory(request: TrajectoryRequest):
             request.source_crs, request.target_crs, request.trajectory_points
         )
 
-        source_crs = CRS.from_string(request.source_crs)
-        target_crs = CRS.from_string(request.target_crs)
+        source_crs = service._crs_from_input(request.source_crs)
+        target_crs = service._crs_from_input(request.target_crs)
 
         return {
             "transformed_trajectory": transformed,
@@ -245,7 +261,7 @@ async def suggest_vias(source_crs: str, target_crs: str):
 
         # Geodetic CRS of source/target
         try:
-            src = CRS.from_string(source_crs)
+            src = service._crs_from_input(source_crs)
             src_geo = getattr(src, "geodetic_crs", None) or src
             add(src_geo.to_string(), "source geodetic")
             try:
@@ -255,7 +271,7 @@ async def suggest_vias(source_crs: str, target_crs: str):
         except Exception:
             pass
         try:
-            tgt = CRS.from_string(target_crs)
+            tgt = service._crs_from_input(target_crs)
             tgt_geo = getattr(tgt, "geodetic_crs", None) or tgt
             add(tgt_geo.to_string(), "target geodetic")
             try:
@@ -346,7 +362,7 @@ async def transform_custom(request: CustomTransformRequest):
 async def transform_local_offset(request: LocalOffsetRequest):
     try:
         service = TransformationService()
-        crs = CRS.from_string(request.crs)
+        crs = service._crs_from_input(request.crs)
         geodetic = getattr(crs, "geodetic_crs", None) or crs
         geodetic3d = geodetic
         try:
@@ -488,7 +504,7 @@ async def transform_local_trajectory(request: LocalTrajectoryRequest):
 
     try:
         service = TransformationService()
-        crs = CRS.from_string(request.crs)
+        crs = service._crs_from_input(request.crs)
         geodetic = getattr(crs, "geodetic_crs", None) or crs
         geodetic3d = geodetic
         try:

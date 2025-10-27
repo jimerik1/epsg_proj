@@ -24,11 +24,20 @@ if _LOCAL_PROJ_DATA.exists():  # pragma: no cover - path detection
 CUSTOM_CRS_ALIASES: Dict[str, str] = {
     "GIGS:OSGB36_3D": CRS.from_epsg(4277).to_3d().to_wkt(),
     "GIGS:AMERSFOORT_3D": CRS.from_epsg(4289).to_3d().to_wkt(),
+    "GIGS:projCRS_A2": CRS.from_proj4(
+        "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 "
+        "+x_0=400000 +y_0=-100000 +ellps=WGS84 +units=m +no_defs"
+    ).to_wkt(),
+    "GIGS:projCRS_A23": CRS.from_proj4(
+        "+proj=utm +zone=31 +ellps=WGS84 +units=us-ft +no_defs"
+    ).to_wkt(),
 }
 
 ALIAS_EQUIVALENTS: Dict[str, str] = {
     "GIGS:OSGB36_3D": "EPSG:4277",
     "GIGS:AMERSFOORT_3D": "EPSG:4289",
+    "GIGS:projCRS_A2": "GIGS:projCRS_A2",
+    "GIGS:projCRS_A23": "GIGS:projCRS_A23",
 }
 
 
@@ -47,6 +56,18 @@ PATH_HINTS: Dict[Tuple[str, str], Dict[str, Optional[List[str]]]] = {
             "agd66 to gda94 (11)",
             "ntv2",
         ]
+    },
+    ("EPSG:4326", "EPSG:27700"): {
+        "preferred_ops": ["inverse of osgb36 to wgs 84 (6)"]
+    },
+    ("EPSG:27700", "EPSG:4326"): {
+        "preferred_ops": ["osgb36 to wgs 84 (6)"]
+    },
+    ("EPSG:4979", "EPSG:27700"): {
+        "preferred_ops": ["inverse of osgb36 to wgs 84 (6)"]
+    },
+    ("EPSG:27700", "EPSG:4979"): {
+        "preferred_ops": ["osgb36 to wgs 84 (6)"]
     },
     # Amersfoort ↔ ETRS89 Molodensky-Badekas paths used in the chained transform
     ("EPSG:4289", "EPSG:4258"): {"preferred_ops": ["molodensky-badekas"]},
@@ -144,10 +165,149 @@ class TransformationService:
         label = crs_code.strip()
         return CUSTOM_CRS_ALIASES.get(label, label)
 
+    def _crs_from_input(self, crs_code: str) -> CRS:
+        resolved = self._resolve_crs_input(crs_code)
+        return CRS.from_user_input(resolved)
+
+    @staticmethod
+    def _values_finite(*values: Optional[float]) -> bool:
+        for value in values:
+            if value is None:
+                continue
+            if not math.isfinite(value):
+                return False
+        return True
+
+    def _transformer_matches(self, transformer: Transformer, ops_lower: List[str]) -> bool:
+        if not ops_lower:
+            return True
+        description = (transformer.description or "").lower()
+        if any(term in description for term in ops_lower):
+            return True
+        for op in getattr(transformer, "operations", []) or []:
+            for attr in ("name", "method_name"):
+                value = getattr(op, attr, None)
+                if isinstance(value, str) and any(term in value.lower() for term in ops_lower):
+                    return True
+            try:
+                proj4 = op.to_proj4()  # type: ignore[attr-defined]
+            except Exception:
+                proj4 = None
+            if isinstance(proj4, str) and any(term in proj4.lower() for term in ops_lower):
+                return True
+        return False
+
     def _collect_preferred_ops(self, preferred_ops: Optional[List[str]]) -> List[str]:
         if not preferred_ops:
             return []
         return [str(item).lower() for item in preferred_ops if item]
+
+    def _candidate_transformers(
+        self,
+        resolved_source: str,
+        resolved_target: str,
+        *,
+        path_id: Optional[int],
+        ops_lower: List[str],
+    ) -> List[Transformer]:
+        try:
+            group = TransformerGroup(
+                resolved_source,
+                resolved_target,
+                always_xy=True,
+                allow_superseded=True,
+            )
+            base_transformers = list(group.transformers)
+        except Exception:
+            base_transformers = []
+
+        candidates: List[Transformer] = []
+
+        def append(transformer: Transformer) -> None:
+            if all(id(transformer) != id(existing) for existing in candidates):
+                candidates.append(transformer)
+
+        if path_id is not None and 0 <= path_id < len(base_transformers):
+            append(base_transformers[path_id])
+
+        if not candidates and ops_lower:
+            for transformer in base_transformers:
+                if self._transformer_matches(transformer, ops_lower):
+                    append(transformer)
+
+        for transformer in base_transformers:
+            append(transformer)
+
+        if not candidates:
+            append(
+                Transformer.from_crs(
+                    resolved_source,
+                    resolved_target,
+                    always_xy=True,
+                )
+            )
+
+        return candidates
+
+    def _run_transform(
+        self,
+        source_crs: str,
+        target_crs: str,
+        x: float,
+        y: float,
+        z: Optional[float],
+        *,
+        path_id: Optional[int] = None,
+        preferred_ops: Optional[List[str]] = None,
+    ) -> Tuple[float, float, Optional[float], Optional[float]]:
+        canonical_source = self._canonical_crs(source_crs)
+        canonical_target = self._canonical_crs(target_crs)
+        resolved_source = self._resolve_crs_input(source_crs)
+        resolved_target = self._resolve_crs_input(target_crs)
+
+        ops_lower = self._collect_preferred_ops(preferred_ops)
+        cache_key = (
+            f"{canonical_source}->{canonical_target}"
+            f"#path={'auto' if path_id is None else path_id}"
+            f"#ops={'|'.join(ops_lower) if ops_lower else 'default'}"
+        )
+
+        def attempt(transformer: Transformer) -> Tuple[float, float, Optional[float]]:
+            x_out, y_out, z_out = self._apply_transform(transformer, x, y, z)
+            if not self._values_finite(x_out, y_out, z_out):
+                raise ValueError("Transformer produced non-finite output")
+            return x_out, y_out, z_out
+
+        cached = self.transformer_cache.get(cache_key)
+        last_error: Optional[Exception] = None
+
+        if cached is not None:
+            try:
+                x_out, y_out, z_out = attempt(cached)
+                return x_out, y_out, z_out, cached.accuracy
+            except Exception as exc:
+                last_error = exc
+                self.transformer_cache.pop(cache_key, None)
+
+        candidates = self._candidate_transformers(
+            resolved_source,
+            resolved_target,
+            path_id=path_id,
+            ops_lower=ops_lower,
+        )
+
+        for transformer in candidates:
+            try:
+                x_out, y_out, z_out = attempt(transformer)
+            except Exception as exc:
+                last_error = exc
+                continue
+            self.transformer_cache[cache_key] = transformer
+            return x_out, y_out, z_out, transformer.accuracy
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("No suitable transformer available")
 
     def _build_transformer(
         self,
@@ -162,62 +322,22 @@ class TransformationService:
         resolved_target = self._resolve_crs_input(target_crs)
         ops_lower = self._collect_preferred_ops(preferred_ops)
         cache_key = (
-            f"{canonical_source}->{canonical_target}" f"#path={'' if path_id is None else path_id}" f"#ops={'|'.join(ops_lower)}"
+            f"{canonical_source}->{canonical_target}"
+            f"#path={'auto' if path_id is None else path_id}"
+            f"#ops={'|'.join(ops_lower) if ops_lower else 'default'}"
         )
 
         cached = self.transformer_cache.get(cache_key)
         if cached is not None:
             return cached
 
-        if path_id is None and not ops_lower:
-            default_key = f"{canonical_source}->{canonical_target}#default"
-            cached_default = self.transformer_cache.get(default_key)
-            if cached_default is not None:
-                return cached_default
-
-        group = TransformerGroup(
+        candidates = self._candidate_transformers(
             resolved_source,
             resolved_target,
-            always_xy=True,
-            allow_superseded=True,
+            path_id=path_id,
+            ops_lower=ops_lower,
         )
-
-        selected: Optional[Transformer] = None
-
-        if path_id is not None and 0 <= path_id < len(group.transformers):
-            selected = group.transformers[path_id]
-
-        if selected is None and ops_lower:
-            for tr in group.transformers:
-                desc = (tr.description or "").lower()
-                if any(h in desc for h in ops_lower):
-                    selected = tr
-                    break
-                op_blob_parts: List[str] = []
-                for op in getattr(tr, "operations", []) or []:
-                    try:
-                        op_blob_parts.append(op.to_proj4())
-                    except Exception:
-                        continue
-                    method_name = getattr(op, "method_name", None)
-                    if method_name:
-                        op_blob_parts.append(str(method_name))
-                    op_name = getattr(op, "name", None)
-                    if op_name:
-                        op_blob_parts.append(str(op_name))
-                    op_code = getattr(op, "code", None)
-                    if op_code:
-                        op_blob_parts.append(str(op_code))
-                op_blob = "\n".join(op_blob_parts).lower()
-                if any(h in op_blob for h in ops_lower):
-                    selected = tr
-                    break
-
-        if selected is None:
-            if group.transformers:
-                selected = group.transformers[0]
-            else:
-                selected = Transformer.from_crs(resolved_source, resolved_target, always_xy=True)
+        selected = candidates[0]
 
         self.transformer_cache[cache_key] = selected
         if path_id is None and not ops_lower:
@@ -319,19 +439,16 @@ class TransformationService:
                 accuracies.append(accuracies[-1] if accuracies else None)
                 continue
 
-            transformer = self._build_transformer(
+            current_x, current_y, current_z, accuracy = self._run_transform(
                 step_source,
                 step_target,
-                path_id=hint.get("path_id"),
-                preferred_ops=hint.get("preferred_ops"),
-            )
-            current_x, current_y, current_z = self._apply_transform(
-                transformer,
                 current_x,
                 current_y,
                 current_z,
+                path_id=hint.get("path_id"),
+                preferred_ops=hint.get("preferred_ops"),
             )
-            accuracies.append(transformer.accuracy)
+            accuracies.append(accuracy)
 
         accuracy = next((val for val in reversed(accuracies) if val is not None), None)
         return self._format_response(source_crs, target_crs, current_x, current_y, current_z, accuracy)
@@ -356,14 +473,16 @@ class TransformationService:
             )
 
         hint = PATH_HINTS.get((canonical_source, canonical_target)) or {}
-        transformer = self._build_transformer(
+        x_out, y_out, z_out, accuracy = self._run_transform(
             source_crs,
             target_crs,
+            x,
+            y,
+            z,
             path_id=hint.get("path_id"),
             preferred_ops=hint.get("preferred_ops"),
         )
-        x_out, y_out, z_out = self._apply_transform(transformer, x, y, z)
-        return self._format_response(source_crs, target_crs, x_out, y_out, z_out, transformer.accuracy)
+        return self._format_response(source_crs, target_crs, x_out, y_out, z_out, accuracy)
 
     def transform_point_with_selection(
         self,
@@ -375,14 +494,16 @@ class TransformationService:
         path_id: Optional[int] = None,
         preferred_ops: Optional[List[str]] = None,
     ) -> Dict:
-        transformer = self._build_transformer(
+        x_out, y_out, z_out, accuracy = self._run_transform(
             source_crs,
             target_crs,
+            x,
+            y,
+            z,
             path_id=path_id,
             preferred_ops=preferred_ops,
         )
-        x_out, y_out, z_out = self._apply_transform(transformer, x, y, z)
-        result = self._format_response(source_crs, target_crs, x_out, y_out, z_out, transformer.accuracy)
+        result = self._format_response(source_crs, target_crs, x_out, y_out, z_out, accuracy)
         result["path_id"] = path_id
         return result
 
@@ -454,7 +575,7 @@ class TransformationService:
         return results
 
     def to_geographic(self, crs_code: str, x: float, y: float) -> Dict[str, float]:
-        crs = CRS.from_string(crs_code)
+        crs = self._crs_from_input(crs_code)
         if crs.is_geographic:
             return {"lon": x, "lat": y}
         wgs84 = "EPSG:4326"
@@ -520,7 +641,7 @@ class TransformationService:
         lat: float,
         height: float,
     ) -> Dict:
-        target_crs = CRS.from_string(crs_code)
+        target_crs = self._crs_from_input(crs_code)
         geodetic = self._get_geodetic_crs(target_crs)
         geodetic3d = self._ensure_3d(geodetic)
 

@@ -3,6 +3,7 @@ from typing import Optional, Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from pyproj import CRS, Transformer
+from app.services.transformer import TransformationService
 
 router = APIRouter(prefix="/api/transform", tags=["transform"])
 
@@ -49,9 +50,11 @@ def vertical_transform(req: VerticalTransformRequest) -> Dict:
         if _to_bool(req.value_is_depth):
             val = -val
 
+        service = TransformationService()
+
         if req.source_crs and req.target_vertical_crs and not req.source_vertical_crs:
-            src = CRS.from_string(req.source_crs)
-            tgt = CRS.from_string(req.target_vertical_crs)
+            src = service._crs_from_input(req.source_crs)
+            tgt = service._crs_from_input(req.target_vertical_crs)
             tr = Transformer.from_crs(src, tgt, always_xy=True)
             # Some transforms may return (lon, lat, z) or just z. Use try/except.
             try:
@@ -61,8 +64,8 @@ def vertical_transform(req: VerticalTransformRequest) -> Dict:
                 z = tr.transform(lon, lat, val)
             out = float(z)
         elif req.source_vertical_crs and req.target_vertical_crs:
-            src = CRS.from_string(req.source_vertical_crs)
-            tgt = CRS.from_string(req.target_vertical_crs)
+            src = service._crs_from_input(req.source_vertical_crs)
+            tgt = service._crs_from_input(req.target_vertical_crs)
             tr = Transformer.from_crs(src, tgt, always_xy=True)
             try:
                 z = tr.transform(lon, lat, val)[-1]
@@ -88,4 +91,3 @@ def vertical_transform(req: VerticalTransformRequest) -> Dict:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-

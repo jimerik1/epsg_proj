@@ -57,6 +57,8 @@ GIGS Reports and Runner
   - Displays a case breakdown modal (payloads, deltas, expected/actual, endpoint/path)
   - Embeds the HTML report for deep inspection
 - Artifacts live at `tests/gigs/gigs_manual_report.json` and `tests/gigs/gigs_manual_report.html` by default. Backend uses `GIGS_REPORT_DIR` (defaults to that path) to locate them.
+- Backend resolver now recognises the synthetic GIGS projected CRS aliases (`GIGS:projCRS_A2`, `GIGS:projCRS_A23`, …) so both the APIs and the manual harness can call them directly without hand-mapping to EPSG codes.
+- Wells harness realigns input/output tables by point label (skipping orphan SRP rows) and posts full local-trajectory payloads. Horizontal fits for the grid-north deviated wells still need refinement—see `TODO.md` for the remaining work.
 
 Path Selection and Deterministic Pipelines
 - Direct transforms: `/api/transform/direct` accepts `path_id` (TransformerGroup index) and `preferred_ops` (list of substrings to match an operation/method).

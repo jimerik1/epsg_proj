@@ -5,6 +5,7 @@ from pyproj.aoi import AreaOfInterest
 from typing import Optional, List, Dict
 from app.services.crs_parser import CustomCRSParser
 from pydantic import BaseModel
+from app.services.transformer import TransformationService
 
 
 class CustomXmlBody(BaseModel):
@@ -16,7 +17,8 @@ router = APIRouter(prefix="/api/crs", tags=["crs"])
 async def crs_info(code: str):
     """Return CRS metadata like name, datum, ellipsoid parameters, etc."""
     try:
-        crs = CRS.from_string(code)
+        service = TransformationService()
+        crs = service._crs_from_input(code)
         # Base info
         info = {
             "code": code,
@@ -107,7 +109,8 @@ async def crs_info(code: str):
 @router.get("/units/{epsg_code}")
 async def get_units(epsg_code: str):
     try:
-        crs = CRS.from_string(epsg_code)
+        service = TransformationService()
+        crs = service._crs_from_input(epsg_code)
         units = {}
         for axis in crs.axis_info:
             if axis.direction in ["east", "north"]:
@@ -325,7 +328,8 @@ def _extract_projection_parameters(crs: CRS) -> Dict:
 @router.get("/parameters")
 async def crs_parameters(code: str):
     try:
-        crs = CRS.from_string(code)
+        service = TransformationService()
+        crs = service._crs_from_input(code)
         params = _extract_projection_parameters(crs)
         return params
     except Exception as e:

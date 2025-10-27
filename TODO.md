@@ -54,6 +54,7 @@
    - Keep grid checklist green (OSTN15/OSGM15 now bundled; add others as needed).
    - Use `/api/transform/vertical` for TVD; mark pass/fail against dataset vertical tolerances when available (fallback to cartesian).
    - Add optional local-trajectory validations using `/api/transform/local-trajectory` where datasets align.
+   - New: label-aligned harness + CRS aliases cleared the simple cases (e.g., 5511 wellYNC), but the grid-north deviated wells (5511 YNF, 5513 YSM, 5515 YN*) still need a stable horizontal correction—current least-squares fits oscillate, leaving 0.25–0.30 m residuals early on and multi-kilometre drifts once the solver loses rank. Investigate grid-convergence rotation or segment-wise MD polynomials before re-running the manual suite.
 4. CI Automation
    - Run GIGS runner in CI; attach JSON/HTML artifacts; fail on regressions for 5100/5200-required/5500.
 5. Frontend/UX

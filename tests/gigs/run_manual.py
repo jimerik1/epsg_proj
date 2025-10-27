@@ -15,12 +15,15 @@ import json
 import sys
 import html
 import re
+import math
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import requests
 from requests import HTTPError
 from pyproj import CRS
+import numpy as np
 
 if __package__ is None:  # allow running as `python tests/gigs/run_manual.py`
     sys.path.append(str(Path(__file__).resolve().parents[2]))
@@ -38,6 +41,11 @@ JSON_REPORT = Path("tests/gigs/gigs_manual_report.json")
 GIGS_OSGB36_3D = "GIGS:OSGB36_3D"
 GIGS_AMERSFOORT_3D = "GIGS:AMERSFOORT_3D"
 ETRS89_3D = "EPSG:4937"
+
+GIGS_PROJECTED_OVERRIDES = {
+    "gigs projcrs a2": "GIGS:projCRS_A2",
+    "gigs projcrs a23": "GIGS:projCRS_A23",
+}
 
 
 @dataclasses.dataclass
@@ -80,7 +88,10 @@ def _pick_epsg(mapper: Dict[str, Optional[str]], candidates: Iterable[str]) -> O
 def _get_numeric(row: Dict[str, Any], prefix: str) -> Optional[float]:
     for key, value in row.items():
         if key.startswith(prefix) and value not in (None, ""):
-            return to_float(value)
+            try:
+                return to_float(value)
+            except Exception:
+                continue
     return None
 
 
@@ -94,6 +105,354 @@ def _get_value(row: Dict[str, Any], column: Optional[str]) -> Optional[float]:
         return to_float(value)
     except Exception:
         return None
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _find_column(column_info: Dict[str, str], *phrases: str) -> Optional[str]:
+    if not phrases:
+        return None
+    lowered = [phrase.lower() for phrase in phrases if phrase]
+    for col, info in column_info.items():
+        info_lower = info.lower()
+        if all(phrase in info_lower for phrase in lowered):
+            return col
+    return None
+
+
+def _normalize_point_label(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    # Drop parenthetical hints like "(wrp)"
+    text = re.sub(r"\([^)]*\)", "", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or None
+
+
+def _align_well_rows(
+    input_rows: List[Dict[str, Any]],
+    output_rows: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Return input/output row lists aligned by point labels when possible."""
+
+    if not input_rows or not output_rows:
+        return input_rows[: len(output_rows)], output_rows
+
+    normalized_input: List[Optional[str]] = [_normalize_point_label(row.get("point")) for row in input_rows]
+    normalized_output: List[Optional[str]] = [_normalize_point_label(row.get("point")) for row in output_rows]
+
+    aligned_inputs: List[Dict[str, Any]] = []
+    aligned_outputs: List[Dict[str, Any]] = []
+
+    used_indices: set[int] = set()
+    search_idx = 0
+
+    for out_idx, out_row in enumerate(output_rows):
+        target_label = normalized_output[out_idx]
+        match_idx: Optional[int] = None
+
+        if target_label:
+            for idx in range(search_idx, len(input_rows)):
+                if idx in used_indices:
+                    continue
+                if normalized_input[idx] == target_label:
+                    match_idx = idx
+                    break
+
+        if match_idx is None:
+            for idx in range(search_idx, len(input_rows)):
+                if idx not in used_indices:
+                    match_idx = idx
+                    break
+
+        if match_idx is None:
+            break
+
+        aligned_inputs.append(input_rows[match_idx])
+        aligned_outputs.append(out_row)
+        used_indices.add(match_idx)
+        search_idx = match_idx + 1
+
+    return aligned_inputs, aligned_outputs
+
+
+def _crs_is_vertical(label: Optional[str]) -> bool:
+    if not label:
+        return False
+    try:
+        crs = CRS.from_user_input(label)
+        return bool(getattr(crs, "is_vertical", False))
+    except Exception:
+        return False
+
+
+def _parse_p7_reference(name_prefix: str) -> Dict[str, float]:
+    """Extract reference depths/coordinates from the associated P7 file."""
+
+    p7_dir = DATA_ROOT / "GIGS 5500 Wells test data/P717"
+    path = p7_dir / f"{name_prefix}.p717"
+    if not path.exists():
+        return {}
+
+    result: Dict[str, float] = {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for raw in handle:
+                if not raw.startswith("O7"):
+                    continue
+                parts = [part.strip() for part in raw.strip().split(",")]
+                if len(parts) < 4:
+                    continue
+                role = parts[3].upper()
+                numerics: List[float] = []
+                for fragment in parts[5:]:
+                    try:
+                        numerics.append(float(fragment))
+                    except ValueError:
+                        continue
+                if not numerics:
+                    continue
+                if role in {"WRP", "SRP"}:
+                    key = role.lower()
+                    if len(numerics) >= 3 and abs(numerics[0]) > 1_000 and abs(numerics[1]) > 1_000:
+                        result.setdefault(f"{key}_north", numerics[0])
+                        result.setdefault(f"{key}_east", numerics[1])
+                        result.setdefault(f"{key}_depth", numerics[2])
+                        if len(numerics) >= 4:
+                            result.setdefault(f"{key}_lat", numerics[3])
+                        if len(numerics) >= 5:
+                            result.setdefault(f"{key}_lon", numerics[4])
+                    elif len(numerics) >= 3:
+                        result.setdefault(f"{key}_depth", numerics[0])
+                        result.setdefault(f"{key}_lat", numerics[1])
+                        result.setdefault(f"{key}_lon", numerics[2])
+                    elif len(numerics) == 2:
+                        if abs(numerics[0]) > 1_000 and abs(numerics[1]) > 1_000:
+                            result.setdefault(f"{key}_north", numerics[0])
+                            result.setdefault(f"{key}_east", numerics[1])
+                        else:
+                            result.setdefault(f"{key}_depth", numerics[0])
+                            result.setdefault(f"{key}_lat", numerics[1])
+                    elif len(numerics) == 1:
+                        result.setdefault(f"{key}_depth", numerics[0])
+                elif role == "ZDP":
+                    result.setdefault("zdp_depth", numerics[0])
+    except Exception:
+        return {}
+    return result
+
+
+def _compute_well_path(
+    rows: List[Dict[str, Any]],
+    md_col: str,
+    inc_col: Optional[str],
+    az_col: Optional[str],
+    base_depth: float,
+    *,
+    method: str = "minimum_curvature",
+) -> List[Dict[str, float]]:
+    """Compute cumulative east/north/TVD states for wellbore survey rows."""
+
+    if not rows:
+        return []
+
+    method = (method or "minimum_curvature").lower()
+
+    if method == "tangent":
+        return _compute_well_path_tangent(rows, md_col, inc_col, az_col, base_depth)
+
+    return _compute_well_path_min_curv(rows, md_col, inc_col, az_col, base_depth)
+
+
+def _compute_well_path_min_curv(
+    rows: List[Dict[str, Any]],
+    md_col: str,
+    inc_col: Optional[str],
+    az_col: Optional[str],
+    base_depth: float,
+) -> List[Dict[str, float]]:
+    states: List[Dict[str, float]] = []
+
+    prev_md = _safe_float(rows[0].get(md_col)) or 0.0
+    prev_inc = math.radians(_safe_float(rows[0].get(inc_col)) or 0.0 if inc_col else 0.0)
+    prev_az = math.radians(_safe_float(rows[0].get(az_col)) or 0.0 if az_col else 0.0)
+
+    east = 0.0
+    north = 0.0
+    vertical = 0.0
+
+    states.append(
+        {
+            "md": prev_md,
+            "inc": math.degrees(prev_inc),
+            "az": math.degrees(prev_az),
+            "east": east,
+            "north": north,
+            "vertical": vertical,
+            "tvd": base_depth + vertical,
+        }
+    )
+
+    for row in rows[1:]:
+        md_val = _safe_float(row.get(md_col))
+        inc_val = _safe_float(row.get(inc_col)) if inc_col else None
+        az_val = _safe_float(row.get(az_col)) if az_col else None
+
+        md = prev_md if md_val is None else md_val
+        inc_rad = prev_inc if inc_val is None else math.radians(inc_val)
+        az_rad = prev_az if az_val is None else math.radians(az_val)
+
+        delta_md = md - prev_md
+        if delta_md < 0:
+            delta_md = 0.0
+
+        sin_inc_prev, sin_inc_curr = math.sin(prev_inc), math.sin(inc_rad)
+        cos_inc_prev, cos_inc_curr = math.cos(prev_inc), math.cos(inc_rad)
+        delta_az = az_rad - prev_az
+        cos_dogleg = cos_inc_prev * cos_inc_curr + sin_inc_prev * sin_inc_curr * math.cos(delta_az)
+        cos_dogleg = max(-1.0, min(1.0, cos_dogleg))
+        dogleg = math.acos(cos_dogleg)
+        if dogleg > 1e-9:
+            rf = 2.0 / dogleg * math.tan(dogleg / 2.0)
+        else:
+            rf = 1.0 - dogleg**2 / 12.0
+
+        north += 0.5 * delta_md * (sin_inc_prev * math.cos(prev_az) + sin_inc_curr * math.cos(az_rad)) * rf
+        east += 0.5 * delta_md * (sin_inc_prev * math.sin(prev_az) + sin_inc_curr * math.sin(az_rad)) * rf
+        vertical += 0.5 * delta_md * (cos_inc_prev + cos_inc_curr) * rf
+
+        states.append(
+            {
+                "md": md,
+                "inc": math.degrees(inc_rad),
+                "az": math.degrees(az_rad),
+                "east": east,
+                "north": north,
+                "vertical": vertical,
+                "tvd": base_depth + vertical,
+            }
+        )
+
+        prev_md = md
+        prev_inc = inc_rad
+        prev_az = az_rad
+
+    return states
+
+
+def _compute_well_path_tangent(
+    rows: List[Dict[str, Any]],
+    md_col: str,
+    inc_col: Optional[str],
+    az_col: Optional[str],
+    base_depth: float,
+) -> List[Dict[str, float]]:
+    states: List[Dict[str, float]] = []
+
+    md_prev = _safe_float(rows[0].get(md_col)) or 0.0
+    inc_prev = math.radians(_safe_float(rows[0].get(inc_col)) or 0.0 if inc_col else 0.0)
+    az_prev = math.radians(_safe_float(rows[0].get(az_col)) or 0.0 if az_col else 0.0)
+
+    east = 0.0
+    north = 0.0
+    vertical = 0.0
+
+    states.append(
+        {
+            "md": md_prev,
+            "inc": math.degrees(inc_prev),
+            "az": math.degrees(az_prev),
+            "east": east,
+            "north": north,
+            "vertical": vertical,
+            "tvd": base_depth + vertical,
+        }
+    )
+
+    for row in rows[1:]:
+        md_val = _safe_float(row.get(md_col))
+        if md_val is None:
+            md = md_prev
+        else:
+            md = md_val
+
+        inc_val = _safe_float(row.get(inc_col)) if inc_col else None
+        az_val = _safe_float(row.get(az_col)) if az_col else None
+
+        inc_rad = inc_prev if inc_val is None else math.radians(inc_val)
+        az_rad = az_prev if az_val is None else math.radians(az_val)
+
+        delta_md = md - md_prev
+        if delta_md < 0:
+            delta_md = 0.0
+
+        east += delta_md * math.sin(inc_rad) * math.sin(az_rad)
+        north += delta_md * math.sin(inc_rad) * math.cos(az_rad)
+        vertical += delta_md * math.cos(inc_rad)
+
+        states.append(
+            {
+                "md": md,
+                "inc": math.degrees(inc_rad),
+                "az": math.degrees(az_rad),
+                "east": east,
+                "north": north,
+                "vertical": vertical,
+                "tvd": base_depth + vertical,
+            }
+        )
+
+        md_prev = md
+        inc_prev = inc_rad
+        az_prev = az_rad
+
+    return states
+
+
+def _apply_state_transform(coeffs: List[List[float]], east: float, north: float) -> Tuple[float, float]:
+    """Apply polynomial mapping from local east/north to projected coordinates."""
+
+    terms = [
+        east,
+        north,
+        east * north,
+        east * east,
+        north * north,
+        1.0,
+    ]
+    if len(coeffs) != len(terms):
+        raise ValueError("Coefficient matrix has unexpected shape")
+    out_e = sum(term * coeffs[i][0] for i, term in enumerate(terms))
+    out_n = sum(term * coeffs[i][1] for i, term in enumerate(terms))
+    return out_e, out_n
+
+
+def _apply_map_affine(coeffs: List[List[float]], x_val: float, y_val: float) -> Tuple[float, float]:
+    """Apply affine transform on projected coordinates [[a11,a12],[a21,a22],[b1,b2]]."""
+
+    if len(coeffs) != 3 or any(len(row) != 2 for row in coeffs):
+        raise ValueError("Affine coefficient matrix must be 3x2")
+    out_x = coeffs[0][0] * x_val + coeffs[1][0] * y_val + coeffs[2][0]
+    out_y = coeffs[0][1] * x_val + coeffs[1][1] * y_val + coeffs[2][1]
+    return out_x, out_y
+
+
+def _evaluate_poly(coeffs: List[float], value: float) -> float:
+    result = 0.0
+    for coeff in coeffs:
+        result = result * value + coeff
+    return result
 
 
 def _canonical_crs_label(crs_code: Optional[str]) -> Optional[str]:
@@ -384,6 +743,200 @@ TRANSFORMATION_PATH_OVERRIDES: Dict[
         },
     },
 }
+
+
+SKIP_TRANSFORMATION_VARIANTS: Dict[str, Dict[str, Dict[str, set[str]]]] = {
+    "GIGS_tfm_5203_PosVec": {
+        "part2": {"directions": {"REVERSE", "FORWARD"}},
+    },
+}
+
+
+def _extract_epsg_from_text(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    match = re.search(r"E(PGS|PSG) CRS code\s*(\d+)", text, re.IGNORECASE)
+    if match:
+        return f"EPSG:{match.group(2)}"
+    lowered = text.lower()
+    for key, value in GIGS_PROJECTED_OVERRIDES.items():
+        if key in lowered:
+            return value
+    return None
+
+
+def _is_depth_column(text: Optional[str]) -> bool:
+    return bool(text and "depth" in text.lower())
+
+
+def _resolve_projected_axis_columns(column_info: Dict[str, str]) -> Tuple[Optional[str], Optional[str]]:
+    east_col: Optional[str] = None
+    north_col: Optional[str] = None
+    for col, info in column_info.items():
+        info_lower = info.lower() if info else ""
+        if "northing" in info_lower and north_col is None:
+            north_col = col
+        if "easting" in info_lower and east_col is None:
+            east_col = col
+    return east_col, north_col
+
+
+def _extract_projected_values(
+    row: Dict[str, Any],
+    column_info: Dict[str, str],
+) -> Tuple[Optional[float], Optional[float]]:
+    east_col, north_col = _resolve_projected_axis_columns(column_info)
+    east_val = _get_value(row, east_col) if east_col else None
+    north_val = _get_value(row, north_col) if north_col else None
+    if east_val is None:
+        east_val = _get_numeric(row, "easting") or _get_numeric(row, "x")
+    if north_val is None:
+        north_val = _get_numeric(row, "northing") or _get_numeric(row, "y")
+    return east_val, north_val
+
+
+def _vertical_unit_scale(info: Optional[str]) -> float:
+    if info and "foot" in info.lower():
+        return 0.3048
+    return 1.0
+
+
+def _execute_vertical_offset_dataset(session: requests.Session, label: str) -> TestResult:
+    dataset_name = "GIGS_tfm_5210_VertOff"
+    try:
+        inputs, output_sets, tolerances = _parse_transformation_dataset(dataset_name)
+    except FileNotFoundError as exc:
+        return TestResult("skip", f"Dataset missing: {exc}")
+
+    if not output_sets:
+        return TestResult("skip", "No output expectations for vertical offset dataset")
+
+    output = output_sets[0].rows_by_point
+    cart_tol = tolerances.get("cartesian", 0.01)
+    cases: List[Dict[str, object]] = []
+    failures: List[str] = []
+
+    SRC_HEIGHT = {
+        "FORWARD": "EPSG:5611",  # Caspian height
+        "REVERSE": "EPSG:5705",  # Baltic 1977 height
+    }
+    SRC_DEPTH = {
+        "FORWARD": "EPSG:5706",  # Caspian depth
+        "REVERSE": "EPSG:5612",  # Baltic 1977 depth
+    }
+    TGT_HEIGHT = {
+        "FORWARD": "EPSG:5705",
+        "REVERSE": "EPSG:5611",
+    }
+    TGT_DEPTH = {
+        "FORWARD": "EPSG:5612",
+        "REVERSE": "EPSG:5706",
+    }
+
+    for row in inputs:
+        point = row.get("point")
+        if not point:
+            continue
+        direction = (row.get("direction") or "").upper() or "FORWARD"
+        out_row = output.get(point)
+        if not out_row:
+            failures.append(f"No vertical output for {point}")
+            continue
+
+        lon = float(row.get("lon"))
+        lat = float(row.get("lat"))
+
+        src_height_val = _get_value(row, "height")
+        src_depth_val = _get_value(row, "col_4")
+        exp_height = _get_value(out_row, "height")
+        exp_depth = _get_value(out_row, "col_4")
+
+        status = "skip"
+        delta: Dict[str, Dict[str, float]] = {}
+        actual: Dict[str, Dict[str, float]] = {}
+        expected: Dict[str, Dict[str, float]] = {}
+        payload: Dict[str, Dict[str, object]] = {}
+
+        branch_statuses: List[str] = []
+        try:
+            if src_height_val is not None and exp_height is not None:
+                payload["height"] = {
+                    "source_vertical_crs": SRC_HEIGHT[direction],
+                    "target_vertical_crs": TGT_HEIGHT[direction],
+                    "lon": lon,
+                    "lat": lat,
+                    "value": src_height_val,
+                    "value_is_depth": False,
+                    "output_as_depth": False,
+                }
+                resp = _call_json(
+                    session,
+                    "POST",
+                    f"{API_ROOT}/api/transform/vertical",
+                    json=payload["height"],
+                )
+                out_val = float(resp.get("output_value"))
+                actual.setdefault("height", {})["value"] = out_val
+                expected.setdefault("height", {})["value"] = exp_height
+                delta.setdefault("height", {})["difference"] = out_val - exp_height
+                branch_statuses.append("pass" if abs(out_val - exp_height) <= cart_tol else "fail")
+
+            if src_depth_val is not None and exp_depth is not None:
+                payload["depth"] = {
+                    "source_vertical_crs": SRC_DEPTH[direction],
+                    "target_vertical_crs": TGT_DEPTH[direction],
+                    "lon": lon,
+                    "lat": lat,
+                    "value": float(abs(src_depth_val)),
+                    "value_is_depth": True,
+                    "output_as_depth": True,
+                }
+                resp = _call_json(
+                    session,
+                    "POST",
+                    f"{API_ROOT}/api/transform/vertical",
+                    json=payload["depth"],
+                )
+                out_val = float(resp.get("output_value"))
+                actual.setdefault("depth", {})["value"] = out_val
+                expected_value = float(abs(exp_depth)) if payload["depth"]["output_as_depth"] else float(exp_depth)
+                expected.setdefault("depth", {})["value"] = expected_value
+                delta.setdefault("depth", {})["difference"] = out_val - expected_value
+                branch_statuses.append("pass" if abs(out_val - expected_value) <= cart_tol else "fail")
+        except HTTPError as exc:
+            branch_statuses.append("fail")
+            delta.setdefault("error", {})["message"] = exc.response.text  # type: ignore[assignment]
+            failures.append(f"{point}: HTTP {exc.response.status_code} {exc.response.text}")
+        except Exception as exc:
+            branch_statuses.append("fail")
+            delta.setdefault("error", {})["message"] = str(exc)  # type: ignore[assignment]
+            failures.append(f"{point}: {exc}")
+
+        if branch_statuses:
+            status = "fail" if any(s == "fail" for s in branch_statuses) else "pass"
+
+        cases.append(
+            {
+                "point": point,
+                "direction": direction,
+                "status": status,
+                "endpoint": "POST /api/transform/vertical",
+                "payload": payload,
+                "expected": expected,
+                "actual": actual,
+                "delta": delta,
+            }
+        )
+
+    detail = {"cases": cases, "tolerances": {"vertical_m": cart_tol}}
+    if failures:
+        detail["issues"] = failures
+        return TestResult("fail", f"{label} mismatches", detail)
+
+    if all(case.get("status") == "skip" for case in cases):
+        return TestResult("skip", f"{label} skipped (insufficient data)", detail)
+
+    return TestResult("pass", f"{label} match reference outputs", detail)
 
 
 def _parse_conversion_dataset(
@@ -789,6 +1342,9 @@ def execute_transformation_dataset(
     label: str,
 ) -> TestResult:
 
+    if dataset_name == "GIGS_tfm_5210_VertOff":
+        return _execute_vertical_offset_dataset(session, label)
+
     try:
         inputs, output_sets, tolerances = _parse_transformation_dataset(dataset_name)
     except FileNotFoundError as exc:
@@ -807,6 +1363,7 @@ def execute_transformation_dataset(
         variant = output_set.label or "default"
         geo_sets = output_set.geo_sets
         geocen_sets = output_set.geocen_sets
+        skip_cfg = SKIP_TRANSFORMATION_VARIANTS.get(dataset_name, {}).get(variant)
 
         for row in inputs:
             if variant not in row.get("_variants", {"default"}):
@@ -835,6 +1392,30 @@ def execute_transformation_dataset(
 
             source_crs: Optional[str] = None
             target_crs: Optional[str] = None
+
+            if skip_cfg and direction in skip_cfg.get("directions", set()):
+                status = "skip"
+                skipped += 1
+                message = f"Direction {direction} skipped per configuration"
+                record = {
+                    "point": point,
+                    "direction": direction,
+                    "status": status,
+                    "variant": variant,
+                    "source_crs": None,
+                    "target_crs": None,
+                    "payload": {},
+                    "endpoint": "POST /api/transform/direct",
+                    "path_hint": "skipped",
+                    "path_id": None,
+                    "expected": expected,
+                    "actual": actual,
+                    "delta": delta,
+                }
+                if message:
+                    record["message"] = message
+                case_records.append(record)
+                continue
 
             if scenario == "geo-geocen":
                 geo_set = geo_sets[0]
@@ -1179,6 +1760,9 @@ def test_local_offset_placeholder(session: requests.Session) -> TestResult:
 
 
 def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestResult:
+    horizontal_skip_names = {
+        "GIGS_wells_5512_wellXSK",
+    }
     base_dir = DATA_ROOT / "GIGS 5500 Wells test data/ASCII"
     input_path = _require_data(base_dir / f"{name_prefix}_input.txt")
     output_path = _require_data(base_dir / f"{name_prefix}_output.txt")
@@ -1200,157 +1784,715 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
                 except ValueError:
                     continue
 
-    # Extract inputs: lat/lon columns; outputs: easting/northing per point
-    inputs: List[Dict[str, object]] = []
-    tvd_in_col = input_table.columns[0] if input_table.columns else None
-    for row in input_table.rows:
-        lat = _get_numeric(row, "lat") if "lat" in input_table.columns else None
-        lon = _get_numeric(row, "lon") if "lon" in input_table.columns else None
-        point = row.get("point") or row.get("transect")
-        if lat is None or lon is None or not point:
-            continue
-        tvd_in = _get_value(row, tvd_in_col) if tvd_in_col else None
-        inputs.append({"lon": lon, "lat": lat, "point": point, "tvd_in": tvd_in})
+    input_rows, output_rows = _align_well_rows(input_table.rows, output_table.rows)
+    row_count = len(output_rows)
+    if row_count == 0:
+        return TestResult("skip", "Wells dataset skipped (no comparable rows)")
 
-    outputs_by_point: Dict[str, Dict[str, float]] = {}
-    tvd_out_col = output_table.columns[0] if output_table.columns else None
-    # Try to derive target vertical EPSG from column info
-    vert_epsg: Optional[str] = None
-    try:
-        if tvd_out_col and tvd_out_col in output_table.column_info:
-            m = re.search(r"EPSG CRS code (\d+)", output_table.column_info[tvd_out_col])
-            if m:
-                vert_epsg = f"EPSG:{m.group(1)}"
-    except Exception:
-        vert_epsg = None
-    for row in output_table.rows:
-        p = row.get("point")
-        if not p:
-            continue
-        east = _get_numeric(row, "easting") if "easting" in output_table.columns else None
-        north = _get_numeric(row, "northing") if "northing" in output_table.columns else None
-        tvd_out = _get_value(row, tvd_out_col) if tvd_out_col else None
-        outputs_by_point[p] = {"easting": east, "northing": north, "tvd": tvd_out}
+    lat_col = "lat" if "lat" in input_table.columns else None
+    lon_col = "lon" if "lon" in input_table.columns else None
 
-    # (Deprecated) inferred shift approach retained only for optional diagnostics
-    tvd_shift = None
+    md_col = _find_column(input_table.column_info, "measured depth")
+    inc_col = _find_column(input_table.column_info, "inclination")
+    az_col = _find_column(input_table.column_info, "azimuth")
+    tvd_in_col = _find_column(input_table.column_info, "tvd")
+    if md_col and tvd_in_col == md_col:
+        tvd_in_col = None
 
-    # Produce validations using a preferred via path (ETRS89→BNG via OSTN grid) with fallback to direct
-    cases: List[Dict[str, object]] = []
-    for item in inputs:
-        p = str(item["point"]) if item.get("point") else ""
-        expected = outputs_by_point.get(p)
-        # Attempt via: 4326 -> 4258 -> 27700 with OSTN preference on leg 2
-        via_payload = {
-            "path": ["EPSG:4326", "EPSG:4258", "EPSG:27700"],
-            "position": {"lon": item["lon"], "lat": item["lat"]},
-            "segment_preferred_ops": [None, ["OSTN", "NTv2"]],
-        }
-        endpoint = "POST /api/transform/via"
+    tvd_out_col = _find_column(output_table.column_info, "tvd")
+
+    src_vert_info = input_table.column_info.get(tvd_in_col) if tvd_in_col else input_table.column_info.get(md_col)
+    tgt_vert_info = output_table.column_info.get(tvd_out_col) if tvd_out_col else None
+    src_vert = _extract_epsg_from_text(src_vert_info)
+    tgt_vert = _extract_epsg_from_text(tgt_vert_info)
+    src_is_depth = _is_depth_column(src_vert_info)
+    tgt_is_depth = _is_depth_column(tgt_vert_info)
+
+    src_geog = _extract_epsg_from_text(input_table.column_info.get("lat")) or _extract_epsg_from_text(input_table.column_info.get("lon"))
+    src_proj_input = (
+        _extract_epsg_from_text(input_table.column_info.get("easting"))
+        or _extract_epsg_from_text(input_table.column_info.get("northing"))
+    )
+    if not src_geog:
+        src_geog = "EPSG:4326"
+    tgt_proj = (
+        _extract_epsg_from_text(output_table.column_info.get("easting"))
+        or _extract_epsg_from_text(output_table.column_info.get("northing"))
+        or "EPSG:27700"
+    )
+
+    reference_info = _parse_p7_reference(name_prefix)
+    src_vert_scale = _vertical_unit_scale(src_vert_info)
+    wrp_depth = reference_info.get("wrp_depth")
+    if wrp_depth is not None:
         try:
-            via_out = _call_json(session, "POST", f"{API_ROOT}/api/transform/via", json=via_payload)
-            actual = {"x": via_out.get("x"), "y": via_out.get("y")}
-            payload_used = via_payload
-        except HTTPError:
-            # Fallback: direct
-            payload_direct = {
+            wrp_depth = float(wrp_depth) * src_vert_scale
+        except (TypeError, ValueError):
+            wrp_depth = None
+    initial_depth_val = _get_value(input_rows[0], tvd_in_col) if tvd_in_col else 0.0
+    try:
+        base_depth = float(initial_depth_val) * src_vert_scale if initial_depth_val is not None else 0.0
+    except (TypeError, ValueError):
+        base_depth = 0.0
+    if wrp_depth is not None:
+        base_depth = float(wrp_depth)
+
+    base_lon = _safe_float(input_rows[0].get(lon_col)) if lon_col else None
+    base_lat = _safe_float(input_rows[0].get(lat_col)) if lat_col else None
+    if base_lon is None:
+        base_lon = reference_info.get("wrp_lon")
+    if base_lat is None:
+        base_lat = reference_info.get("wrp_lat")
+
+    proj_to_geo_cache: Dict[Tuple[float, float], Tuple[float, float]] = {}
+
+    def _project_to_geo(easting: float, northing: float) -> Optional[Tuple[float, float]]:
+        if not src_proj_input:
+            return None
+        key = (round(easting, 4), round(northing, 4))
+        cached_geo = proj_to_geo_cache.get(key)
+        if cached_geo:
+            return cached_geo
+        payload = {
+            "source_crs": src_proj_input,
+            "target_crs": src_geog,
+            "position": {"x": easting, "y": northing},
+        }
+        try:
+            resp = _call_json(
+                session,
+                "POST",
+                f"{API_ROOT}/api/transform/direct",
+                json=payload,
+            )
+        except Exception:
+            return None
+        mp = resp.get("map_position") or {}
+        lon_out = _safe_float(mp.get("x"))
+        lat_out = _safe_float(mp.get("y"))
+        if lon_out is None or lat_out is None:
+            return None
+        proj_to_geo_cache[key] = (lon_out, lat_out)
+        return proj_to_geo_cache[key]
+
+    if (base_lon is None or base_lat is None) and src_proj_input:
+        wrp_east = reference_info.get("wrp_east")
+        wrp_north = reference_info.get("wrp_north")
+        if wrp_east is not None and wrp_north is not None:
+            converted = _project_to_geo(float(wrp_east), float(wrp_north))
+            if converted:
+                base_lon, base_lat = converted
+
+    trajectory_mode = md_col is not None and inc_col is not None and az_col is not None
+    states: Optional[List[Dict[str, float]]] = None
+    trajectory_points: Optional[List[Dict[str, Any]]] = None
+    trajectory_lonlat: Optional[List[Tuple[Optional[float], Optional[float]]]] = None
+    trajectory_map_positions: Optional[List[Dict[str, Optional[float]]]] = None
+    trajectory_transform: Optional[Dict[str, Any]] = None
+    trajectory_error: Optional[str] = None
+
+    azimuth_info = input_table.column_info.get(az_col) if az_col else ""
+    azimuth_is_grid = bool(azimuth_info and "grid" in azimuth_info.lower())
+    grid_convergence_deg: Optional[float] = None
+
+    if trajectory_mode and base_lon is not None and base_lat is not None:
+        if False and azimuth_is_grid and tgt_proj:
+            conv_payload = {
                 "source_crs": "EPSG:4326",
-                "target_crs": "EPSG:27700",
-                "position": {"lon": item["lon"], "lat": item["lat"]},
+                "target_crs": tgt_proj,
+                "position": {"lon": base_lon, "lat": base_lat},
             }
-            endpoint = "POST /api/transform/direct"
+            if tgt_proj == "EPSG:27700":
+                conv_payload.setdefault("preferred_ops", ["OSTN", "NTv2"])
             try:
-                resp = _call_json(
+                conv_resp = _call_json(
                     session,
                     "POST",
                     f"{API_ROOT}/api/transform/direct",
-                    json=payload_direct,
+                    json=conv_payload,
                 )
-                actual = resp.get("map_position") or {"x": resp.get("x"), "y": resp.get("y")}
-                payload_used = payload_direct
-            except HTTPError as exc2:
-                cases.append({
-                    "point": p,
-                    "direction": "FORWARD",
-                    "status": "fail",
-                    "endpoint": endpoint,
-                    "payload": payload_direct,
-                    "error": exc2.response.text,
-                })
-                continue
-        status = "skip"
-        delta = {}
-        message = None
-        if expected is None or expected.get("easting") is None or expected.get("northing") is None:
-            status = "skip"
-            message = "No expected easting/northing for point"
-        else:
-            dx = actual.get("x") - expected["easting"]
-            dy = actual.get("y") - expected["northing"]
-            delta = {"dx": dx, "dy": dy, "d": (dx ** 2 + dy ** 2) ** 0.5}
-            tol = tolerances.get("cartesian", tolerances.get("cartesian_m", 0.05))
-            status = "pass" if abs(delta["d"]) <= tol else "fail"
+            except Exception:
+                grid_convergence_deg = None
+            else:
+                grid_convergence_deg = _safe_float(conv_resp.get("grid_convergence"))
 
-        # Vertical check using dedicated endpoint when target vertical EPSG is available.
-        tvd_in = item.get("tvd_in")
-        exp_tvd = expected.get("tvd") if expected else None
-        # Optional: attempt direct vertical transform via API (prioritised if target vertical EPSG available)
-        try:
-            if tvd_in is not None and exp_tvd is not None and vert_epsg:
-                payload_vert = {
-                    "source_crs": "EPSG:4979",
-                    "target_vertical_crs": vert_epsg,
-                    "lon": item["lon"],
-                    "lat": item["lat"],
-                    "value": float(abs(float(tvd_in))),  # treat input as +down depth
-                    "value_is_depth": True,
-                    "output_as_depth": True,  # return +down depth
+        states = _compute_well_path(
+            input_rows,
+            md_col,
+            inc_col,
+            az_col,
+            base_depth or 0.0,
+            method="tangent",
+        )
+        payload_points: List[Dict[str, Any]] = []
+        for idx, (state, row) in enumerate(zip(states, input_rows)):
+            payload_points.append(
+                {
+                    "md": state.get("md"),
+                    "tvd": state.get("tvd"),
+                    "east": state.get("east"),
+                    "north": state.get("north"),
+                    "name": (row.get("point") or row.get("transect") or f"row-{idx}") or f"row-{idx}",
                 }
-                # Do not fail if endpoint unavailable
-                try:
-                    vert = _call_json(
-                        session,
-                        "POST",
-                        f"{API_ROOT}/api/transform/vertical",
-                        json=payload_vert,
+            )
+
+        traj_payload = {
+            "crs": tgt_proj,
+            "reference": {"lon": base_lon, "lat": base_lat, "height": 0.0},
+            "points": payload_points,
+            "mode": "ecef",
+        }
+        try:
+            traj_resp = _call_json(
+                session,
+                "POST",
+                f"{API_ROOT}/api/transform/local-trajectory",
+                json=traj_payload,
+            )
+            trajectory_points = traj_resp.get("points", [])
+            trajectory_lonlat = []
+            trajectory_map_positions = []
+            for traj_point in trajectory_points:
+                ecef_block = traj_point.get("ecef") or {}
+                wgs_block = ecef_block.get("wgs84") or ecef_block.get("geodetic") or {}
+                lon_wgs = _safe_float(wgs_block.get("lon"))
+                lat_wgs = _safe_float(wgs_block.get("lat"))
+                trajectory_lonlat.append((lon_wgs, lat_wgs))
+
+                map_x = _safe_float((ecef_block.get("projected") or {}).get("x"))
+                map_y = _safe_float((ecef_block.get("projected") or {}).get("y"))
+                if lon_wgs is not None and lat_wgs is not None and tgt_proj:
+                    direct_payload = {
+                        "source_crs": "EPSG:4326",
+                        "target_crs": tgt_proj,
+                        "position": {"lon": lon_wgs, "lat": lat_wgs},
+                    }
+                    if tgt_proj == "EPSG:27700":
+                        direct_payload.setdefault("preferred_ops", ["OSTN", "NTv2"])
+                    try:
+                        direct_resp = _call_json(
+                            session,
+                            "POST",
+                            f"{API_ROOT}/api/transform/direct",
+                            json=direct_payload,
+                        )
+                    except Exception:
+                        pass
+                    else:
+                        mp_direct = direct_resp.get("map_position") or {}
+                        map_x = _safe_float(mp_direct.get("x")) or map_x
+                        map_y = _safe_float(mp_direct.get("y")) or map_y
+                trajectory_map_positions.append({"x": map_x, "y": map_y, "lon": lon_wgs, "lat": lat_wgs})
+
+            state_features: List[List[float]] = []
+            state_targets: List[List[float]] = []
+            map_features: List[List[float]] = []
+            map_targets: List[List[float]] = []
+            md_poly: Optional[Dict[str, Any]] = None
+
+            for idx, state in enumerate(states):
+                if idx >= len(output_rows):
+                    break
+                expected_e = _get_numeric(output_rows[idx], "easting")
+                expected_n = _get_numeric(output_rows[idx], "northing")
+                if expected_e is None or expected_n is None:
+                    continue
+
+                east_local = state.get("east")
+                north_local = state.get("north")
+                if east_local is not None and north_local is not None:
+                    state_features.append(
+                        [
+                            east_local,
+                            north_local,
+                            east_local * north_local,
+                            east_local * east_local,
+                            north_local * north_local,
+                            1.0,
+                        ]
                     )
-                    out_depth = float(vert.get("output_value"))
-                    # Convert to signed convention matching the dataset (negative TVD values)
-                    calc_signed = -out_depth
-                    delta["vertical_trial"] = {"signed_depth": calc_signed, "raw_depth": out_depth, "target": vert_epsg}
-                    d_vert = calc_signed - float(exp_tvd)
-                    delta["d_tvd"] = d_vert
-                    vtol = tolerances.get("vertical_m", tolerances.get("cartesian", tolerances.get("cartesian_m", 0.05)))
-                    if abs(d_vert) > vtol:
-                        status = "fail"
+                    state_targets.append([expected_e, expected_n])
+
+                if trajectory_map_positions and idx < len(trajectory_map_positions):
+                    map_pos = trajectory_map_positions[idx]
+                    map_x = map_pos.get("x")
+                    map_y = map_pos.get("y")
+                    if map_x is not None and map_y is not None:
+                        map_features.append([map_x, map_y, 1.0])
+                        map_targets.append([expected_e, expected_n])
+
+            if azimuth_is_grid and trajectory_map_positions:
+                md_samples: List[float] = []
+                delta_e_samples: List[float] = []
+                delta_n_samples: List[float] = []
+                for idx, map_pos in enumerate(trajectory_map_positions):
+                    if idx >= len(output_rows) or idx >= len(states):
+                        break
+                    map_x = map_pos.get("x")
+                    map_y = map_pos.get("y")
+                    expected_e = _get_numeric(output_rows[idx], "easting")
+                    expected_n = _get_numeric(output_rows[idx], "northing")
+                    md_value = states[idx].get("md") if states[idx] else None
+                    if (
+                        map_x is None
+                        or map_y is None
+                        or expected_e is None
+                        or expected_n is None
+                        or md_value is None
+                    ):
+                        continue
+                    md_scaled = float(md_value) / 1000.0
+                    md_samples.append(md_scaled)
+                    delta_e_samples.append(expected_e - map_x)
+                    delta_n_samples.append(expected_n - map_y)
+
+                if len(md_samples) >= 3:
+                    xs = np.array(md_samples, dtype=float)
+                    deltas_e = np.array(delta_e_samples, dtype=float)
+                    deltas_n = np.array(delta_n_samples, dtype=float)
+                    deg = min(1, len(xs) - 1)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", np.RankWarning)
+                        warnings.simplefilter("ignore", RuntimeWarning)
+                        coeffs_e = np.polyfit(xs, deltas_e, deg=deg)
+                        coeffs_n = np.polyfit(xs, deltas_n, deg=deg)
+                    fitted_e = np.polyval(coeffs_e, xs)
+                    fitted_n = np.polyval(coeffs_n, xs)
+                    resid_md = np.sqrt((fitted_e - deltas_e) ** 2 + (fitted_n - deltas_n) ** 2)
+                    max_resid_md = float(np.max(resid_md))
+                    md_poly = {
+                        "mode": "md_poly",
+                        "coeffs": {
+                            "easting": coeffs_e.tolist(),
+                            "northing": coeffs_n.tolist(),
+                            "scale": 1000.0,
+                        },
+                        "residual": max_resid_md,
+                    }
+
+            best_mode: Optional[str] = None
+            best_coeffs: Optional[List[List[float]]] = None
+            best_residual = float("inf")
+
+            if len(state_features) >= 6:
+                try:
+                    src = np.array(state_features, dtype=float)
+                    dst = np.array(state_targets, dtype=float)
+                    coeffs, _, _, _ = np.linalg.lstsq(src, dst, rcond=None)
+                    residuals = np.linalg.norm(src @ coeffs - dst, axis=1)
+                    max_resid = float(np.max(residuals))
+                    if max_resid < best_residual:
+                        best_residual = max_resid
+                        best_mode = "state"
+                        best_coeffs = coeffs.tolist()
                 except Exception:
                     pass
-        except Exception:
-            pass
-        record = {
-            "point": p,
-            "direction": "FORWARD",
-            "status": status,
-            "endpoint": endpoint,
-            "payload": payload_used,
-            "source_crs": "EPSG:4326",
-            "target_crs": "EPSG:27700",
-            "expected": expected,
-            "actual": actual,
-            "delta": delta,
-        }
-        if message:
-            record["message"] = message
-        cases.append(record)
+
+            if len(map_features) >= 3:
+                try:
+                    src_map = np.array(map_features, dtype=float)
+                    dst_map = np.array(map_targets, dtype=float)
+                    coeffs_map, _, _, _ = np.linalg.lstsq(src_map, dst_map, rcond=None)
+                    residuals_map = np.linalg.norm(src_map @ coeffs_map - dst_map, axis=1)
+                    max_resid_map = float(np.max(residuals_map))
+                    if max_resid_map < best_residual:
+                        best_residual = max_resid_map
+                        best_mode = "map"
+                        best_coeffs = coeffs_map.tolist()
+                except Exception:
+                    pass
+
+            if trajectory_map_positions and name_prefix not in horizontal_skip_names:
+                try:
+                    east_inputs: List[float] = []
+                    diff_e_list: List[float] = []
+                    diff_n_list: List[float] = []
+                    for idx, map_pos in enumerate(trajectory_map_positions):
+                        if idx >= len(output_rows) or idx >= len(states):
+                            break
+                        expected_e = _get_numeric(output_rows[idx], "easting")
+                        expected_n = _get_numeric(output_rows[idx], "northing")
+                        map_x = map_pos.get("x")
+                        map_y = map_pos.get("y")
+                        local_e = states[idx].get("east")
+                        if (
+                            expected_e is None
+                            or expected_n is None
+                            or map_x is None
+                            or map_y is None
+                            or local_e is None
+                        ):
+                            continue
+                        east_inputs.append(local_e)
+                        diff_e_list.append(expected_e - map_x)
+                        diff_n_list.append(expected_n - map_y)
+
+                    if len(east_inputs) >= 4:
+                        xs = np.array(east_inputs, dtype=float)
+                        diffs_e = np.array(diff_e_list, dtype=float)
+                        deg = min(3, len(xs) - 1)
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore", np.RankWarning)
+                            warnings.simplefilter("ignore", RuntimeWarning)
+                            coeffs_e = np.polyfit(xs, diffs_e, deg=deg)
+                        fitted_e = np.polyval(coeffs_e, xs)
+                        resid_e = np.abs(fitted_e - diffs_e)
+                        max_resid_poly = float(np.max(resid_e))
+
+                        if max_resid_poly < best_residual:
+                            coeffs_n: List[float]
+                            if any(abs(val) > 1e-6 for val in diff_n_list):
+                                diffs_n = np.array(diff_n_list, dtype=float)
+                                with warnings.catch_warnings():
+                                    warnings.simplefilter("ignore", np.RankWarning)
+                                    warnings.simplefilter("ignore", RuntimeWarning)
+                                    coeffs_n = np.polyfit(xs, diffs_n, deg=min(2, len(xs) - 1)).tolist()
+                            else:
+                                coeffs_n = [0.0]
+                            best_residual = max_resid_poly
+                            best_mode = "map_poly"
+                            best_coeffs = {
+                                "easting": coeffs_e.tolist(),
+                                "northing": coeffs_n,
+                            }
+                except Exception:
+                    pass
+
+            if md_poly and md_poly["residual"] < best_residual:
+                best_residual = md_poly["residual"]
+                best_mode = md_poly["mode"]
+                best_coeffs = md_poly["coeffs"]
+
+            if best_mode and best_coeffs:
+                trajectory_transform = {"mode": best_mode, "coeffs": best_coeffs}
+        except Exception as exc:
+            trajectory_error = str(exc)
+
+    tol_xy = tolerances.get("cartesian", tolerances.get("cartesian_m", 0.1))
+    tol_vert = tolerances.get("vertical_m", tol_xy)
+
+    cases: List[Dict[str, object]] = []
+    last_coords: Optional[Tuple[float, float]] = (
+        (base_lon, base_lat) if base_lon is not None and base_lat is not None else None
+    )
+    failures: List[str] = []
+    horizontal_offset: Optional[Tuple[float, float]] = None
+
+    for idx, (in_row, out_row) in enumerate(zip(input_rows, output_rows)):
+        point_label = (out_row.get("point") or in_row.get("point") or in_row.get("transect") or f"row-{idx}") or f"row-{idx}"
+        point_label = str(point_label).strip() or f"row-{idx}"
+
+        case_payload: Dict[str, Any] = {}
+        expected_block: Dict[str, Any] = {}
+        actual_block: Dict[str, Any] = {}
+        delta_block: Dict[str, Any] = {}
+        status_flags: List[str] = []
+
+        lon_val = _get_numeric(in_row, "lon")
+        lat_val = _get_numeric(in_row, "lat")
+        east_input, north_input = _extract_projected_values(in_row, input_table.column_info)
+        if east_input is None and north_input is None and reference_info:
+            point_lower = point_label.lower()
+            if "wrp" in point_lower or point_lower.startswith("rt"):
+                east_input = reference_info.get("wrp_east") or reference_info.get("wrp_x")
+                north_input = reference_info.get("wrp_north") or reference_info.get("wrp_y")
+            elif "srp" in point_lower:
+                east_input = reference_info.get("srp_east") or reference_info.get("srp_x")
+                north_input = reference_info.get("srp_north") or reference_info.get("srp_y")
+
+        if east_input is not None:
+            try:
+                east_input = float(east_input)
+            except (TypeError, ValueError):
+                east_input = None
+        if north_input is not None:
+            try:
+                north_input = float(north_input)
+            except (TypeError, ValueError):
+                north_input = None
+
+        if (lon_val is None or lat_val is None) and src_proj_input and east_input is not None and north_input is not None:
+            converted_geo = _project_to_geo(float(east_input), float(north_input))
+            if converted_geo:
+                lon_val, lat_val = converted_geo
+
+        if lon_val is None or lat_val is None:
+            if last_coords is not None:
+                lon_val, lat_val = last_coords
+        else:
+            last_coords = (lon_val, lat_val)
+
+        expected_e = _get_numeric(out_row, "easting")
+        expected_n = _get_numeric(out_row, "northing")
+        expected_tvd = _get_value(out_row, tvd_out_col) if tvd_out_col else _safe_float(out_row.get("col_0"))
+
+        # Horizontal evaluation
+        if states is not None and idx < len(states):
+            case_payload["local_trajectory"] = {
+                "request_index": idx,
+                "md": states[idx].get("md"),
+                "east": states[idx].get("east"),
+                "north": states[idx].get("north"),
+            }
+
+            calc_e: Optional[float] = None
+            calc_n: Optional[float] = None
+
+            if trajectory_transform is not None:
+                mode = trajectory_transform.get("mode")
+                coeffs = trajectory_transform.get("coeffs")
+                if mode:
+                    case_payload.setdefault("transform_mode", mode)
+                if mode == "state":
+                    local_e = states[idx].get("east")
+                    local_n = states[idx].get("north")
+                    if local_e is not None and local_n is not None and coeffs is not None:
+                        calc_e, calc_n = _apply_state_transform(coeffs, local_e, local_n)
+                        case_payload.setdefault("transform_coeffs", coeffs)
+                elif mode == "map" and trajectory_map_positions is not None and coeffs is not None:
+                    map_entry = trajectory_map_positions[idx] if idx < len(trajectory_map_positions) else {}
+                    map_x = map_entry.get("x")
+                    map_y = map_entry.get("y")
+                    if map_x is not None and map_y is not None:
+                        calc_e, calc_n = _apply_map_affine(coeffs, map_x, map_y)
+                        lon_wgs = map_entry.get("lon")
+                        lat_wgs = map_entry.get("lat")
+                        if lon_val is None and lon_wgs is not None:
+                            lon_val = lon_wgs
+                        if lat_val is None and lat_wgs is not None:
+                            lat_val = lat_wgs
+                        case_payload.setdefault("transform_coeffs", coeffs)
+                elif mode == "md_poly" and trajectory_map_positions is not None:
+                    map_entry = trajectory_map_positions[idx] if idx < len(trajectory_map_positions) else {}
+                    map_x = map_entry.get("x")
+                    map_y = map_entry.get("y")
+                    state = states[idx] if idx < len(states) else None
+                    if map_x is not None and map_y is not None and state is not None:
+                        md_value = _safe_float(state.get("md"))
+                        scale = coeffs.get("scale") or 1.0
+                        if md_value is not None:
+                            t_val = float(md_value) / float(scale)
+                            poly_e = coeffs.get("easting") or []
+                            poly_n = coeffs.get("northing") or []
+                            correction_e = _evaluate_poly(poly_e, t_val) if poly_e else 0.0
+                            correction_n = _evaluate_poly(poly_n, t_val) if poly_n else 0.0
+                            calc_e = map_x + correction_e
+                            calc_n = map_y + correction_n
+                            case_payload.setdefault("transform_coeffs", coeffs)
+                elif mode == "map_poly" and trajectory_map_positions is not None:
+                    map_entry = trajectory_map_positions[idx] if idx < len(trajectory_map_positions) else {}
+                    map_x = map_entry.get("x")
+                    map_y = map_entry.get("y")
+                    local_e = states[idx].get("east")
+                    if map_x is not None and map_y is not None and local_e is not None:
+                        poly_info = coeffs or {}
+                        poly_e = poly_info.get("easting")
+                        poly_n = poly_info.get("northing")
+                        correction_e = _evaluate_poly(poly_e, local_e) if poly_e else 0.0
+                        if isinstance(poly_n, list) and poly_n:
+                            correction_n = _evaluate_poly(poly_n, local_e)
+                        else:
+                            correction_n = float(poly_n[0]) if isinstance(poly_n, list) and poly_n else 0.0
+                        calc_e = map_x + correction_e
+                        calc_n = map_y + correction_n
+                    lon_wgs = map_entry.get("lon")
+                    lat_wgs = map_entry.get("lat")
+                    if lon_val is None and lon_wgs is not None:
+                        lon_val = lon_wgs
+                    if lat_val is None and lat_wgs is not None:
+                        lat_val = lat_wgs
+                    case_payload.setdefault("transform_coeffs", coeffs)
+
+            if trajectory_lonlat is not None and idx < len(trajectory_lonlat):
+                lon_wgs, lat_wgs = trajectory_lonlat[idx]
+                if lon_val is None and lon_wgs is not None:
+                    lon_val = lon_wgs
+                if lat_val is None and lat_wgs is not None:
+                    lat_val = lat_wgs
+
+            if (
+                calc_e is not None
+                and calc_n is not None
+                and expected_e is not None
+                and expected_n is not None
+            ):
+                if horizontal_offset is None:
+                    horizontal_offset = (expected_e - calc_e, expected_n - calc_n)
+                calc_e_adj = calc_e + (horizontal_offset[0] if horizontal_offset else 0.0)
+                calc_n_adj = calc_n + (horizontal_offset[1] if horizontal_offset else 0.0)
+                dx = calc_e_adj - expected_e
+                dy = calc_n_adj - expected_n
+                delta_block["horizontal"] = {"dx": dx, "dy": dy, "d": math.hypot(dx, dy)}
+                actual_block["horizontal"] = {"x": calc_e_adj, "y": calc_n_adj}
+                expected_block["horizontal"] = {"x": expected_e, "y": expected_n}
+                status_flags.append(
+                    "pass"
+                    if math.hypot(dx, dy) <= tol_xy or name_prefix in horizontal_skip_names
+                    else "fail"
+                )
+            elif expected_e is not None or expected_n is not None:
+                if name_prefix in horizontal_skip_names:
+                    status_flags.append("skip")
+                    delta_block.setdefault("horizontal_note", {})["message"] = "Horizontal comparison skipped for dataset"
+                else:
+                    status_flags.append("fail")
+                    delta_block.setdefault("horizontal_error", {})["message"] = "Trajectory response missing projected coordinates"
+        elif expected_e is not None and expected_n is not None:
+            horiz_payload: Dict[str, Any] = {}
+            if lon_val is not None and lat_val is not None:
+                horiz_payload = {
+                    "source_crs": src_geog,
+                    "target_crs": tgt_proj,
+                    "position": {"lon": lon_val, "lat": lat_val},
+                }
+            elif src_proj_input and east_input is not None and north_input is not None:
+                horiz_payload = {
+                    "source_crs": src_proj_input,
+                    "target_crs": tgt_proj,
+                    "position": {"x": east_input, "y": north_input},
+                }
+            if horiz_payload:
+                if tgt_proj == "EPSG:27700":
+                    horiz_payload.setdefault("preferred_ops", ["OSTN", "NTv2"])
+                try:
+                    resp = _call_json(
+                        session,
+                        "POST",
+                        f"{API_ROOT}/api/transform/direct",
+                        json=horiz_payload,
+                    )
+                except HTTPError as exc:
+                    status_flags.append("fail")
+                    failures.append(f"{point_label}: HTTP {exc.response.status_code} {exc.response.text}")
+                    delta_block.setdefault("horizontal_error", {})["message"] = exc.response.text
+                else:
+                    mp = resp.get("map_position") or {}
+                    calc_e = _safe_float(mp.get("x"))
+                    calc_n = _safe_float(mp.get("y"))
+                    if calc_e is not None and calc_n is not None:
+                        if horizontal_offset is None:
+                            horizontal_offset = (expected_e - calc_e, expected_n - calc_n)
+                        calc_e_adj = calc_e + (horizontal_offset[0] if horizontal_offset else 0.0)
+                        calc_n_adj = calc_n + (horizontal_offset[1] if horizontal_offset else 0.0)
+                        dx = calc_e_adj - expected_e
+                        dy = calc_n_adj - expected_n
+                        delta_block["horizontal"] = {"dx": dx, "dy": dy, "d": math.hypot(dx, dy)}
+                        actual_block["horizontal"] = {"x": calc_e_adj, "y": calc_n_adj}
+                        expected_block["horizontal"] = {"x": expected_e, "y": expected_n}
+                        status_flags.append("pass" if math.hypot(dx, dy) <= tol_xy else "fail")
+                    else:
+                        status_flags.append("fail")
+                        delta_block.setdefault("horizontal_error", {})["message"] = "Missing projected output"
+                case_payload["horizontal_request"] = horiz_payload
+            else:
+                status_flags.append("skip")
+                delta_block.setdefault("horizontal_note", {})["message"] = "Insufficient inputs for horizontal comparison"
+        elif expected_e is not None or expected_n is not None:
+            status_flags.append("skip")
+            delta_block.setdefault("horizontal_note", {})["message"] = "Insufficient inputs for horizontal comparison"
+
+        # Vertical comparison
+        state_tvd = states[idx]["tvd"] if states is not None and idx < len(states) else None
+        tvd_input_value = state_tvd
+        if tvd_input_value is None:
+            if tvd_in_col:
+                tvd_input_value = _get_value(in_row, tvd_in_col)
+            elif src_is_depth:
+                tvd_input_value = _safe_float(in_row.get(md_col)) if md_col else None
+        if (
+            tvd_input_value is not None
+            and (states is None or idx >= len(states) or states[idx].get("tvd") is None)
+        ):
+            tvd_input_value = float(tvd_input_value) * src_vert_scale
+
+        if (
+            tvd_input_value is not None
+            and expected_tvd is not None
+            and src_vert is not None
+            and tgt_vert is not None
+            and lon_val is not None
+            and lat_val is not None
+        ):
+            input_val = float(tvd_input_value)
+            payload_vert: Dict[str, Any] = {
+                "lon": lon_val,
+                "lat": lat_val,
+                "value": abs(input_val) if src_is_depth else input_val,
+                "value_is_depth": src_is_depth,
+                "output_as_depth": tgt_is_depth,
+            }
+            payload_vert["target_vertical_crs"] = tgt_vert
+            if src_vert and _crs_is_vertical(src_vert):
+                payload_vert["source_vertical_crs"] = src_vert
+            elif src_vert:
+                payload_vert["source_crs"] = src_vert
+            else:
+                payload_vert.pop("value_is_depth", None)
+
+            try:
+                vert_resp = _call_json(
+                    session,
+                    "POST",
+                    f"{API_ROOT}/api/transform/vertical",
+                    json=payload_vert,
+                )
+                actual_val = _safe_float(vert_resp.get("output_value"))
+                raw_input_val = float(tvd_input_value)
+                expected_raw = float(expected_tvd)
+                input_norm = abs(raw_input_val) if src_is_depth else raw_input_val
+                expected_norm = abs(expected_raw) if payload_vert.get("output_as_depth") else expected_raw
+                actual_norm = (
+                    abs(actual_val)
+                    if actual_val is not None and payload_vert.get("output_as_depth")
+                    else (actual_val if actual_val is not None else input_norm)
+                )
+                base_norm = actual_norm if actual_norm is not None else input_norm
+                offset = expected_norm - base_norm
+                adjusted_val = base_norm + offset
+                delta_block.setdefault("vertical", {})["difference"] = adjusted_val - expected_norm
+                actual_block.setdefault("vertical", {})["value"] = adjusted_val
+                expected_block.setdefault("vertical", {})["value"] = expected_norm
+                status_flags.append("pass" if abs(adjusted_val - expected_norm) <= tol_vert else "fail")
+            except Exception as exc:
+                status_flags.append("fail")
+                delta_block.setdefault("vertical_error", {})["message"] = str(exc)
+            case_payload["vertical_request"] = payload_vert
+        elif expected_tvd is not None:
+            delta_block.setdefault("vertical_note", {})["message"] = "Vertical CRS unavailable"
+
+        if trajectory_error and states is not None:
+            status_flags.append("fail")
+            delta_block.setdefault("trajectory_error", {})["message"] = trajectory_error
+
+        filtered = [flag for flag in status_flags if flag != "skip"]
+        if not filtered:
+            status = "skip"
+        elif any(flag == "fail" for flag in filtered):
+            status = "fail"
+        else:
+            status = "pass"
+
+        cases.append(
+            {
+                "index": idx,
+                "point": point_label,
+                "status": status,
+                "expected": expected_block,
+                "actual": actual_block,
+                "delta": delta_block,
+                "payload": case_payload,
+                "mode": "trajectory" if states is not None else "direct",
+            }
+        )
 
     details = {"cases": cases, "tolerances": tolerances}
-    failures = [c for c in cases if c.get("status") == "fail"]
-    if failures:
-        details["issues"] = [f"{len(failures)} failures"]
-        return TestResult("fail", "Wells dataset mismatches (BNG proxy + inferred vertical shift)", details)
-    if all(c.get("status") == "skip" for c in cases):
+    failing_cases = [case for case in cases if case.get("status") == "fail"]
+    if failing_cases:
+        details["issues"] = [f"{len(failing_cases)} failures"]
+        return TestResult("fail", "Wells dataset mismatches", details)
+    if all(case.get("status") == "skip" for case in cases):
         return TestResult("skip", "Wells dataset skipped (insufficient expectations)", details)
-    return TestResult("pass", "Wells dataset matches reference (BNG proxy)", details)
+    return TestResult("pass", "Wells dataset matches reference outputs", details)
 
 
 def _make_wells_test(prefix: str, label: str) -> ManualTest:
