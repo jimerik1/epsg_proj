@@ -1790,6 +1790,17 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
     input_path = _require_data(base_dir / f"{name_prefix}_input.txt")
     output_path = _require_data(base_dir / f"{name_prefix}_output.txt")
 
+    # Capture header/comment block for UI info
+    header_lines: List[str] = []
+    try:
+        with input_path.open("r", encoding="utf-8") as handle:
+            for raw in handle:
+                if not raw.startswith("#"):
+                    break
+                header_lines.append(raw.rstrip())
+    except Exception:
+        header_lines = []
+
     input_table = parse_gigs_table(input_path)
     output_table = parse_gigs_table(output_path)
 
@@ -2654,6 +2665,8 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
         )
 
     details = {"cases": cases, "tolerances": tolerances}
+    if header_lines:
+        details["dataset_info"] = "\n".join(header_lines)
     failing_cases = [case for case in cases if case.get("status") == "fail"]
     if failing_cases:
         details["issues"] = [f"{len(failing_cases)} failures"]

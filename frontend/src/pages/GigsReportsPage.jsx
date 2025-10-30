@@ -237,6 +237,8 @@ function TestDetailsModal({ test, onClose }) {
   const [replayOut, setReplayOut] = React.useState(null);
   const [replayErr, setReplayErr] = React.useState(null);
   const [replayBusy, setReplayBusy] = React.useState(false);
+  const [showInfo, setShowInfo] = React.useState(false);
+  const [infoText, setInfoText] = React.useState('');
 
   const runReplay = async (c, idx) => {
     setReplayIdx(idx);
@@ -338,6 +340,7 @@ function TestDetailsModal({ test, onClose }) {
                       {Number.isFinite(dTvd) && Number.isFinite(tolCartesian) && Math.abs(dTvd) > tolCartesian && badge('Δ TVD > tol')}
                     </div>
                     <div className="flex gap-2">
+                      <button className="btn" onClick={() => { setInfoText((details && details.dataset_info) || 'No dataset info available.'); setShowInfo(true); }}>Info</button>
                       <button className="btn" onClick={() => runReplay(c, i)} disabled={replayBusy && replayIdx===i}>{replayBusy && replayIdx===i ? 'Replaying…' : 'Replay'}</button>
                       <button className="btn" onClick={() => openInVia(c)}>Open in Transform Via</button>
                     </div>
@@ -399,6 +402,18 @@ function TestDetailsModal({ test, onClose }) {
           )}
         </div>
       </div>
+      {showInfo && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowInfo(false)} />
+          <div className="relative bg-white rounded-lg shadow-xl w-[90vw] max-w-3xl max-h-[80vh] overflow-auto p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="font-semibold">Dataset Info</div>
+              <button className="btn" onClick={() => setShowInfo(false)}>Close</button>
+            </div>
+            <pre className="bg-gray-50 text-gray-800 text-xs p-3 rounded whitespace-pre-wrap">{infoText}</pre>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
