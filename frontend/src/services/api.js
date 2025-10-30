@@ -147,3 +147,19 @@ export async function prefetchGrids(names) {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+
+export async function replayEndpoint(endpoint, payload) {
+  // endpoint string like "POST /api/transform/direct"
+  const parts = String(endpoint || '').trim().split(/\s+/);
+  const method = (parts[0] || 'POST').toUpperCase();
+  const path = parts[1] || '/api/transform/direct';
+  const url = `${API_URL}${path}`;
+  const init = { method, headers: { 'Content-Type': 'application/json' } };
+  if (method !== 'GET') init.body = JSON.stringify(payload || {});
+  const res = await fetch(url, init);
+  const text = await res.text();
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
+  if (!res.ok) throw new Error(typeof parsed === 'object' ? JSON.stringify(parsed) : String(parsed));
+  return parsed;
+}

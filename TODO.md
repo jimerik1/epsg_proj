@@ -32,13 +32,20 @@
     - Ensure OSTN15/OSGM15 present (now bundled; keep checklist green); add any extra grids if datasets require them.
     - Tighten tolerance usage per dataset (if specific vertical tolerances are stated).
 
-## What’s Missing Backend-Side
+## What's Missing Backend-Side
 1. Transformation Pipelines
    - Curated PROJ pipelines and deterministic selection for 5203/5205/5207/5213.
 2. User-Defined CRS / Bin Grid
    - Minimal loader for bin-grid/seismic CRS + ephemeral registration to unlock `tfm-5209`–`tfm-5212`.
 3. Vertical Transformations
    - DONE: `/api/transform/vertical` endpoint. Next: expand vertical CRS mapping for 5500 and add any required geoid grids.
+4. Local Trajectory – continuous scale-factor mode (new)
+   - Add `mode: "scale_continuous"` to `/api/transform/local-trajectory` that:
+     - Recomputes PROJ factors (meridional/parallel, and optionally convergence) at each step’s current lon/lat.
+     - Applies factors to the incremental (ΔE, ΔN) since the previous point, updates projected X/Y, then inverts to lon/lat for the next step.
+     - Produces outputs alongside existing `ecef`/`scale` branches and a `difference` block vs ECEF.
+   - Goal: quantify how close per‑step scale gets to ECEF on long horizontals; expected to reduce >1 m drift seen with single‑point scale.
+   - Perf: acceptable — one inverse proj + one get_factors per step; comparable to ECEF throughput.
 
 ## Way Forward to Full GIGS Support (5100/5200/5500)
 1. Series 5100 – keep green
@@ -59,6 +66,7 @@
    - Run GIGS runner in CI; attach JSON/HTML artifacts; fail on regressions for 5100/5200-required/5500.
 5. Frontend/UX
    - Deep link to Transform Via (DONE) and show grids/vertical info for failing cases; keep tolerance highlight badges; optional per-series summary banners.
+   - Add viewer toggle to compare `ecef` vs `scale` vs planned `scale_continuous` for local trajectory payloads (after backend lands).
 
 ## Useful Files & Commands
 - Manual harness: `python3 tests/gigs/run_manual.py`

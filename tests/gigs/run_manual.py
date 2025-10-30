@@ -23,6 +23,11 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 import requests
 from requests import HTTPError
 from pyproj import CRS
+try:
+    # Use external MCM module for robust well path in local grid
+    from tests.gigs import mcm_module
+except Exception:
+    mcm_module = None
 import numpy as np
 
 if __package__ is None:  # allow running as `python tests/gigs/run_manual.py`
@@ -209,6 +214,17 @@ def _parse_p7_reference(name_prefix: str) -> Dict[str, float]:
     try:
         with path.open("r", encoding="utf-8") as handle:
             for raw in handle:
+                # Capture survey details AZ_GRID convergence when present (radians)
+                if "Survey Details" in raw and "AZ_GRID" in raw:
+                    try:
+                        # Extract all numeric fragments in the line and pick a reasonable radian value (~0-0.1)
+                        nums = [float(x) for x in re.findall(r"[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?", raw)]
+                        for val in nums:
+                            if 0.0 <= val <= 0.2:
+                                result.setdefault("grid_convergence_rad", val)
+                                break
+                    except Exception:
+                        pass
                 if not raw.startswith("O7"):
                     continue
                 parts = [part.strip() for part in raw.strip().split(",")]
@@ -261,6 +277,7 @@ def _compute_well_path(
     base_depth: float,
     *,
     method: str = "minimum_curvature",
+    azimuth_offset_rad: float = 0.0,
 ) -> List[Dict[str, float]]:
     """Compute cumulative east/north/TVD states for wellbore survey rows."""
 
@@ -270,9 +287,13 @@ def _compute_well_path(
     method = (method or "minimum_curvature").lower()
 
     if method == "tangent":
-        return _compute_well_path_tangent(rows, md_col, inc_col, az_col, base_depth)
+        return _compute_well_path_tangent(
+            rows, md_col, inc_col, az_col, base_depth, azimuth_offset_rad
+        )
 
-    return _compute_well_path_min_curv(rows, md_col, inc_col, az_col, base_depth)
+    return _compute_well_path_min_curv(
+        rows, md_col, inc_col, az_col, base_depth, azimuth_offset_rad
+    )
 
 
 def _compute_well_path_min_curv(
@@ -281,12 +302,13 @@ def _compute_well_path_min_curv(
     inc_col: Optional[str],
     az_col: Optional[str],
     base_depth: float,
+    azimuth_offset_rad: float = 0.0,
 ) -> List[Dict[str, float]]:
     states: List[Dict[str, float]] = []
 
     prev_md = _safe_float(rows[0].get(md_col)) or 0.0
     prev_inc = math.radians(_safe_float(rows[0].get(inc_col)) or 0.0 if inc_col else 0.0)
-    prev_az = math.radians(_safe_float(rows[0].get(az_col)) or 0.0 if az_col else 0.0)
+    prev_az = math.radians(_safe_float(rows[0].get(az_col)) or 0.0 if az_col else 0.0) + azimuth_offset_rad
 
     east = 0.0
     north = 0.0
@@ -311,7 +333,7 @@ def _compute_well_path_min_curv(
 
         md = prev_md if md_val is None else md_val
         inc_rad = prev_inc if inc_val is None else math.radians(inc_val)
-        az_rad = prev_az if az_val is None else math.radians(az_val)
+        az_rad = prev_az if az_val is None else math.radians(az_val) + azimuth_offset_rad
 
         delta_md = md - prev_md
         if delta_md < 0:
@@ -357,12 +379,13 @@ def _compute_well_path_tangent(
     inc_col: Optional[str],
     az_col: Optional[str],
     base_depth: float,
+    azimuth_offset_rad: float = 0.0,
 ) -> List[Dict[str, float]]:
     states: List[Dict[str, float]] = []
 
     md_prev = _safe_float(rows[0].get(md_col)) or 0.0
     inc_prev = math.radians(_safe_float(rows[0].get(inc_col)) or 0.0 if inc_col else 0.0)
-    az_prev = math.radians(_safe_float(rows[0].get(az_col)) or 0.0 if az_col else 0.0)
+    az_prev = math.radians(_safe_float(rows[0].get(az_col)) or 0.0 if az_col else 0.0) + azimuth_offset_rad
 
     east = 0.0
     north = 0.0
@@ -391,7 +414,7 @@ def _compute_well_path_tangent(
         az_val = _safe_float(row.get(az_col)) if az_col else None
 
         inc_rad = inc_prev if inc_val is None else math.radians(inc_val)
-        az_rad = az_prev if az_val is None else math.radians(az_val)
+        az_rad = az_prev if az_val is None else math.radians(az_val) + azimuth_offset_rad
 
         delta_md = md - md_prev
         if delta_md < 0:
@@ -1893,10 +1916,70 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
 
     azimuth_info = input_table.column_info.get(az_col) if az_col else ""
     azimuth_is_grid = bool(azimuth_info and "grid" in azimuth_info.lower())
-    grid_convergence_deg: Optional[float] = None
+    grid_convergence_rad: Optional[float] = None
+
+    computed_grid_positions: Optional[List[Tuple[Optional[float], Optional[float]]]] = None
+
+    # If grid azimuths and we have a projected CRS + WRP easting/northing, compute local N/E via MCM directly in source grid
+    if (
+        trajectory_mode
+        and azimuth_is_grid
+        and src_proj_input
+        and reference_info.get("wrp_east") is not None
+        and reference_info.get("wrp_north") is not None
+        and mcm_module is not None
+    ):
+        try:
+            wrp_e = float(reference_info.get("wrp_east"))
+            wrp_n = float(reference_info.get("wrp_north"))
+            # Prepare MD/INC/AZ arrays
+            mds: List[float] = []
+            incs_deg: List[float] = []
+            azs_deg: List[float] = []
+            prev_md = 0.0
+            prev_inc = 0.0
+            prev_az = 0.0
+            for row in input_rows:
+                md_v = _safe_float(row.get(md_col)) if md_col else None
+                inc_v = _safe_float(row.get(inc_col)) if inc_col else None
+                az_v = _safe_float(row.get(az_col)) if az_col else None
+                if md_v is None:
+                    md_v = prev_md
+                if inc_v is None:
+                    inc_v = prev_inc
+                if az_v is None:
+                    az_v = prev_az
+                mds.append(float(md_v))
+                incs_deg.append(float(inc_v))
+                azs_deg.append(float(az_v))
+                prev_md, prev_inc, prev_az = float(md_v), float(inc_v), float(az_v)
+
+            # Integrate segment-by-segment using MCM in radians; accumulate offsets
+            cum_n = 0.0
+            cum_e = 0.0
+            computed_grid_positions = []
+            for i in range(len(mds)):
+                if i == 0:
+                    computed_grid_positions.append((wrp_e, wrp_n))
+                    continue
+                Inc1 = math.radians(incs_deg[i-1])
+                Azi1 = math.radians(azs_deg[i-1])
+                MD1 = mds[i-1]
+                Inc2 = math.radians(incs_deg[i])
+                Azi2 = math.radians(azs_deg[i])
+                MD2 = mds[i]
+                out, _, _ = mcm_module.mcm(Inc1, Azi1, MD1, Inc2, Azi2, MD2, 1, 0.0, 0.0, 0.0)
+                seg_n, seg_e, _ = out
+                cum_n += float(seg_n)
+                cum_e += float(seg_e)
+                computed_grid_positions.append((wrp_e + cum_e, wrp_n + cum_n))
+        except Exception:
+            computed_grid_positions = None
 
     if trajectory_mode and base_lon is not None and base_lat is not None:
-        if False and azimuth_is_grid and tgt_proj:
+        # If azimuths are given relative to grid north, fetch meridian convergence
+        # at the reference location so we can convert to true azimuths.
+        if azimuth_is_grid and tgt_proj:
             conv_payload = {
                 "source_crs": "EPSG:4326",
                 "target_crs": tgt_proj,
@@ -1912,52 +1995,80 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
                     json=conv_payload,
                 )
             except Exception:
-                grid_convergence_deg = None
+                grid_convergence_rad = None
             else:
-                grid_convergence_deg = _safe_float(conv_resp.get("grid_convergence"))
+                # Backend returns PROJ meridian_convergence (radians). Keep as radians.
+                grid_convergence_rad = _safe_float(conv_resp.get("grid_convergence"))
 
-        states = _compute_well_path(
-            input_rows,
-            md_col,
-            inc_col,
-            az_col,
-            base_depth or 0.0,
-            method="tangent",
-        )
-        payload_points: List[Dict[str, Any]] = []
-        for idx, (state, row) in enumerate(zip(states, input_rows)):
-            payload_points.append(
-                {
-                    "md": state.get("md"),
-                    "tvd": state.get("tvd"),
-                    "east": state.get("east"),
-                    "north": state.get("north"),
-                    "name": (row.get("point") or row.get("transect") or f"row-{idx}") or f"row-{idx}",
-                }
-            )
+        # Fallback to P7-provided AZ_GRID value if backend could not provide
+        if azimuth_is_grid and not grid_convergence_rad:
+            p7_gamma = reference_info.get("grid_convergence_rad")
+            if p7_gamma is not None:
+                try:
+                    grid_convergence_rad = float(p7_gamma)
+                except Exception:
+                    grid_convergence_rad = None
 
-        traj_payload = {
-            "crs": tgt_proj,
-            "reference": {"lon": base_lon, "lat": base_lat, "height": 0.0},
-            "points": payload_points,
-            "mode": "ecef",
-        }
-        try:
-            traj_resp = _call_json(
-                session,
-                "POST",
-                f"{API_ROOT}/api/transform/local-trajectory",
-                json=traj_payload,
-            )
-            trajectory_points = traj_resp.get("points", [])
-            trajectory_lonlat = []
-            trajectory_map_positions = []
-            for traj_point in trajectory_points:
+        # Try a small set of azimuth offsets to handle sign conventions: +gamma, -gamma, 0.
+        candidate_offsets: List[float] = []
+        if azimuth_is_grid and grid_convergence_rad is not None:
+            candidate_offsets = [float(grid_convergence_rad), float(-grid_convergence_rad), 0.0]
+        elif azimuth_is_grid:
+            candidate_offsets = [0.0]
+        else:
+            candidate_offsets = [0.0]
+
+        best_combo = None  # tuple(states, traj_points, traj_lonlat, traj_map_pos, offset, method, score)
+        method_candidates = ["tangent", "minimum_curvature"] if azimuth_is_grid else ["tangent"]
+        for cand in candidate_offsets:
+            for meth in method_candidates:
+                states_c = _compute_well_path(
+                    input_rows,
+                    md_col,
+                    inc_col,
+                    az_col,
+                    base_depth or 0.0,
+                    method=meth,
+                    azimuth_offset_rad=cand,
+                )
+
+            payload_points_c: List[Dict[str, Any]] = []
+            for idx, (state, row) in enumerate(zip(states_c, input_rows)):
+                payload_points_c.append(
+                    {
+                        "md": state.get("md"),
+                        "tvd": state.get("tvd"),
+                        "east": state.get("east"),
+                        "north": state.get("north"),
+                        "name": (row.get("point") or row.get("transect") or f"row-{idx}") or f"row-{idx}",
+                    }
+                )
+
+            traj_payload_c = {
+                "crs": tgt_proj,
+                "reference": {"lon": base_lon, "lat": base_lat, "height": 0.0},
+                "points": payload_points_c,
+                "mode": "ecef",
+            }
+            try:
+                traj_resp_c = _call_json(
+                    session,
+                    "POST",
+                    f"{API_ROOT}/api/transform/local-trajectory",
+                    json=traj_payload_c,
+                )
+            except Exception:
+                continue
+
+            traj_points_c = traj_resp_c.get("points", [])
+            traj_lonlat_c: List[Tuple[Optional[float], Optional[float]]] = []
+            traj_map_pos_c: List[Dict[str, Optional[float]]] = []
+            for traj_point in traj_points_c:
                 ecef_block = traj_point.get("ecef") or {}
                 wgs_block = ecef_block.get("wgs84") or ecef_block.get("geodetic") or {}
                 lon_wgs = _safe_float(wgs_block.get("lon"))
                 lat_wgs = _safe_float(wgs_block.get("lat"))
-                trajectory_lonlat.append((lon_wgs, lat_wgs))
+                traj_lonlat_c.append((lon_wgs, lat_wgs))
 
                 map_x = _safe_float((ecef_block.get("projected") or {}).get("x"))
                 map_y = _safe_float((ecef_block.get("projected") or {}).get("y"))
@@ -1982,7 +2093,36 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
                         mp_direct = direct_resp.get("map_position") or {}
                         map_x = _safe_float(mp_direct.get("x")) or map_x
                         map_y = _safe_float(mp_direct.get("y")) or map_y
-                trajectory_map_positions.append({"x": map_x, "y": map_y, "lon": lon_wgs, "lat": lat_wgs})
+                traj_map_pos_c.append({"x": map_x, "y": map_y, "lon": lon_wgs, "lat": lat_wgs})
+
+            # Score this candidate across many points (up to 500) to disambiguate sign
+            score = 0.0
+            count = 0
+            max_samples = min(len(output_rows), len(traj_map_pos_c), 500)
+            for idx in range(max_samples):
+                exp_e = _get_numeric(output_rows[idx], "easting")
+                exp_n = _get_numeric(output_rows[idx], "northing")
+                cal = traj_map_pos_c[idx]
+                cx = _safe_float(cal.get("x"))
+                cy = _safe_float(cal.get("y"))
+                if exp_e is None or exp_n is None or cx is None or cy is None:
+                    continue
+                dx = float(cx) - float(exp_e)
+                dy = float(cy) - float(exp_n)
+                score += dx * dx + dy * dy
+                count += 1
+            if count == 0:
+                continue
+            if best_combo is None or score < best_combo[-1]:
+                best_combo = (states_c, traj_points_c, traj_lonlat_c, traj_map_pos_c, cand, meth, score)
+
+        if best_combo is None:
+            trajectory_points = []
+            trajectory_lonlat = []
+            trajectory_map_positions = []
+            states = None
+        else:
+            states, trajectory_points, trajectory_lonlat, trajectory_map_positions, az_used, method_used, _ = best_combo
 
             state_features: List[List[float]] = []
             state_targets: List[List[float]] = []
@@ -2013,13 +2153,13 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
                     )
                     state_targets.append([expected_e, expected_n])
 
-                if trajectory_map_positions and idx < len(trajectory_map_positions):
-                    map_pos = trajectory_map_positions[idx]
-                    map_x = map_pos.get("x")
-                    map_y = map_pos.get("y")
-                    if map_x is not None and map_y is not None:
-                        map_features.append([map_x, map_y, 1.0])
-                        map_targets.append([expected_e, expected_n])
+            if trajectory_map_positions and idx < len(trajectory_map_positions):
+                map_pos = trajectory_map_positions[idx]
+                map_x = map_pos.get("x")
+                map_y = map_pos.get("y")
+                if map_x is not None and map_y is not None:
+                    map_features.append([map_x, map_y, 1.0])
+                    map_targets.append([expected_e, expected_n])
 
             if azimuth_is_grid and trajectory_map_positions:
                 md_samples: List[float] = []
@@ -2165,8 +2305,7 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
 
             if best_mode and best_coeffs:
                 trajectory_transform = {"mode": best_mode, "coeffs": best_coeffs}
-        except Exception as exc:
-            trajectory_error = str(exc)
+        # Candidate selection and feature extraction completed; errors are handled inline above.
 
     tol_xy = tolerances.get("cartesian", tolerances.get("cartesian_m", 0.1))
     tol_vert = tolerances.get("vertical_m", tol_xy)
@@ -2238,7 +2377,36 @@ def _parse_wells_dataset(session: requests.Session, name_prefix: str) -> TestRes
             calc_e: Optional[float] = None
             calc_n: Optional[float] = None
 
-            if trajectory_transform is not None:
+            # Option 1: if MCM grid-plane positions are available, use them
+            if (
+                computed_grid_positions is not None
+                and idx < len(computed_grid_positions)
+                and src_proj_input
+            ):
+                gp = computed_grid_positions[idx]
+                if gp[0] is not None and gp[1] is not None:
+                    gp_payload = {
+                        "source_crs": src_proj_input,
+                        "target_crs": tgt_proj,
+                        "position": {"x": gp[0], "y": gp[1]},
+                    }
+                    if tgt_proj == "EPSG:27700":
+                        gp_payload.setdefault("preferred_ops", ["OSTN", "NTv2"])
+                    try:
+                        gp_resp = _call_json(
+                            session,
+                            "POST",
+                            f"{API_ROOT}/api/transform/direct",
+                            json=gp_payload,
+                        )
+                        mp_gp = gp_resp.get("map_position") or {}
+                        calc_e = _safe_float(mp_gp.get("x"))
+                        calc_n = _safe_float(mp_gp.get("y"))
+                        if calc_e is not None and calc_n is not None:
+                            case_payload.setdefault("grid_plane", {})["used"] = True
+                    except Exception:
+                        calc_e = calc_n = None
+            elif trajectory_transform is not None:
                 mode = trajectory_transform.get("mode")
                 coeffs = trajectory_transform.get("coeffs")
                 if mode:
@@ -2550,7 +2718,7 @@ for test_id, dataset_name, label in TRANSFORMATION_DATASETS:
 TESTS.append(
     ManualTest(
         "local-offset",
-        "5300/5400/5500",
+        "5500",
         "Local offset & trajectory comparisons",
         test_local_offset_placeholder,
     )

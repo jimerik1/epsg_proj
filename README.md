@@ -25,6 +25,18 @@ Testing
 - Example PyProj smoke test in `backend/tests/test_transformations.py`.
 - Run inside backend container: `pytest -q`.
 
+Local Trajectories (ECEF vs Scale)
+- Endpoint: `POST /api/transform/local-trajectory`
+  - Inputs: projected CRS (`crs`), site `reference` (either `x/y[/height]` or `lon/lat[/height]`), and a list of trajectory `points` with local offsets `{ east, north, tvd }` in meters (`tvd` is positive down; the API converts internally to up).
+  - Modes:
+    - `ecef` (recommended): applies ENU→ECEF about the site and maps through the target CRS. Accurate on long horizontals; inherently handles curvature and convergence.
+    - `scale`: single‑point scale approximation. Uses PROJ meridional/parallel scale factors at the site. Fast but may drift on long horizontals as factors vary with position.
+    - `both`: returns both branches plus a `difference` block for QA.
+  - Notes:
+    - If your local EN offsets are referenced to grid north, rotate true↔grid as needed using `/api/calculate/grid-convergence` at the site.
+    - Performance: thousands to tens of thousands of points per call are fine for both methods.
+  - Planned: a `scale_continuous` mode that recomputes scale factors per step to reduce drift (see TODO.md).
+
 API Reference (summary – see `docs/` for full details)
 
 | Endpoint | Method | Description |
@@ -59,6 +71,11 @@ GIGS Reports and Runner
 - Artifacts live at `tests/gigs/gigs_manual_report.json` and `tests/gigs/gigs_manual_report.html` by default. Backend uses `GIGS_REPORT_DIR` (defaults to that path) to locate them.
 - Backend resolver now recognises the synthetic GIGS projected CRS aliases (`GIGS:projCRS_A2`, `GIGS:projCRS_A23`, …) so both the APIs and the manual harness can call them directly without hand-mapping to EPSG codes.
 - Wells harness realigns input/output tables by point label (skipping orphan SRP rows) and posts full local-trajectory payloads. Horizontal fits for the grid-north deviated wells still need refinement—see `TODO.md` for the remaining work.
+
+Current Status (Oct 2025)
+- 5100: green for wired datasets.
+- 5200: most green; outstanding work on 5205 (Molodensky‑Badekas), 5207 (NTv2 grid selection/pinning), 5213 (2D three‑translation). See TODO.md for specific path pinning.
+- 5500: majority pass; remaining grid‑azimuth wells under review. Local trajectory endpoints support both ECEF and scale; ECEF is authoritative for modeling.
 
 Path Selection and Deterministic Pipelines
 - Direct transforms: `/api/transform/direct` accepts `path_id` (TransformerGroup index) and `preferred_ops` (list of substrings to match an operation/method).

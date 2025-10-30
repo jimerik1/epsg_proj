@@ -7,6 +7,9 @@ export default function ViaTransformPage() {
   const [target, setTarget] = useState('EPSG:27700');
   const [lon, setLon] = useState(-3.1883);
   const [lat, setLat] = useState(55.9533);
+  const [x, setX] = useState('');
+  const [y, setY] = useState('');
+  const [useXY, setUseXY] = useState(false);
   const [legs, setLegs] = useState([]); // [{ from, to, paths:[], selected:null }]
   const [suggestedVias, setSuggestedVias] = useState([]); // [{code, reason}]
   const [busy, setBusy] = useState(false);
@@ -29,12 +32,20 @@ export default function ViaTransformPage() {
       if (typeof pos.lon === 'number' && typeof pos.lat === 'number') {
         setLon(pos.lon);
         setLat(pos.lat);
+        setUseXY(false);
+      } else if (typeof pos.x === 'number' && typeof pos.y === 'number') {
+        setX(String(pos.x));
+        setY(String(pos.y));
+        setUseXY(true);
       }
       // Fetch paths and apply any provided segment_path_ids
       (async () => {
         const newLegs = await fetchPaths();
         if (Array.isArray(data.segment_path_ids)) {
           setLegs((ls) => ls.map((l, i) => ({ ...l, selected: data.segment_path_ids[i] ?? l.selected })));
+        }
+        if (Array.isArray(data.segment_preferred_ops)) {
+          // Keep for future extension; currently UI uses path_ids, API accepts ops too
         }
       })();
     } catch (e) {
@@ -93,11 +104,19 @@ export default function ViaTransformPage() {
     setBusy(true);
     setResult(null);
     try {
-      const position = { lon: Number(lon), lat: Number(lat) };
-      // Ensure input numeric
-      if (!Number.isFinite(position.lon) || !Number.isFinite(position.lat)) {
-        setError('Lon/Lat must be numeric');
-        return;
+      let position;
+      if (useXY) {
+        position = { x: Number(x), y: Number(y) };
+        if (!Number.isFinite(position.x) || !Number.isFinite(position.y)) {
+          setError('X/Y must be numeric');
+          return;
+        }
+      } else {
+        position = { lon: Number(lon), lat: Number(lat) };
+        if (!Number.isFinite(position.lon) || !Number.isFinite(position.lat)) {
+          setError('Lon/Lat must be numeric');
+          return;
+        }
       }
       const path = [source, ...viaList.filter(v => (v || '').trim() !== ''), target];
       const payload = {
@@ -120,7 +139,7 @@ export default function ViaTransformPage() {
     setBusy(true);
     setResult(null);
     try {
-      const position = { lon: Number(lon), lat: Number(lat) };
+      const position = useXY ? { x: Number(x), y: Number(y) } : { lon: Number(lon), lat: Number(lat) };
       const idx = leg - 1;
       const l = legs[idx];
       const pathId = l?.selected;
@@ -216,14 +235,31 @@ export default function ViaTransformPage() {
         <label className="label">Target
           <input className="input w-full" value={target} onChange={e => setTarget(e.target.value)} />
         </label>
-        <div className="flex gap-3">
-          <label className="label">Lon
-            <input className="input" type="number" value={lon} onChange={e => setLon(e.target.value)} />
-          </label>
-          <label className="label">Lat
-            <input className="input" type="number" value={lat} onChange={e => setLat(e.target.value)} />
-          </label>
-        </div>
+        {useXY ? (
+          <div className="flex gap-3">
+            <label className="label">X
+              <input className="input" type="number" value={x} onChange={e => setX(e.target.value)} />
+            </label>
+            <label className="label">Y
+              <input className="input" type="number" value={y} onChange={e => setY(e.target.value)} />
+            </label>
+          </div>
+        ) : (
+          <div className="flex gap-3">
+            <label className="label">Lon
+              <input className="input" type="number" value={lon} onChange={e => setLon(e.target.value)} />
+            </label>
+            <label className="label">Lat
+              <input className="input" type="number" value={lat} onChange={e => setLat(e.target.value)} />
+            </label>
+          </div>
+        )}
+      </div>
+      <div>
+        <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" checked={useXY} onChange={e => setUseXY(e.target.checked)} />
+          Use projected X/Y input (instead of Lon/Lat)
+        </label>
       </div>
       <div className="card">
         <div className="card-header">Via(s)</div>

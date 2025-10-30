@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getGigsReport, getGigsReportHtmlUrl, runGigsTests, prefetchGrids } from '../services/api';
+import { getGigsReport, getGigsReportHtmlUrl, runGigsTests, prefetchGrids, replayEndpoint } from '../services/api';
 
 function StatusBadge({ status }) {
   const s = String(status || '').toLowerCase();
@@ -208,6 +208,7 @@ function TabButton({ active, onClick, children }) {
   return <button className={`btn ${active ? 'btn-primary' : ''}`} onClick={onClick}>{children}</button>;
 }
 
+
 function TestDetailsModal({ test, onClose }) {
   const [tab, setTab] = React.useState('summary');
   const details = test?.details || {};
@@ -230,6 +231,45 @@ function TestDetailsModal({ test, onClose }) {
     if (m.includes(key)) return `${value} m`;
     if (deg.includes(key)) return `${value} deg`;
     return String(value);
+  };
+
+  const [replayIdx, setReplayIdx] = React.useState(null);
+  const [replayOut, setReplayOut] = React.useState(null);
+  const [replayErr, setReplayErr] = React.useState(null);
+  const [replayBusy, setReplayBusy] = React.useState(false);
+
+  const runReplay = async (c, idx) => {
+    setReplayIdx(idx);
+    setReplayOut(null);
+    setReplayErr(null);
+    setReplayBusy(true);
+    try {
+      // Prefer explicitly captured request blocks in the case payload
+      const payload = c?.payload || {};
+      let endpoint = c?.endpoint || 'POST /api/transform/direct';
+      let body = payload;
+      if (payload && payload.horizontal_request) {
+        endpoint = 'POST /api/transform/direct';
+        body = payload.horizontal_request;
+      } else if (payload && payload.vertical_request) {
+        endpoint = 'POST /api/transform/vertical';
+        body = payload.vertical_request;
+      } else if (payload && payload.direct_request) {
+        endpoint = 'POST /api/transform/direct';
+        body = payload.direct_request;
+      } else if (payload && payload.local_trajectory) {
+        // This case used a locally computed mapping (state/map_poly) rather than a direct API call.
+        // We cannot faithfully replay it against /api/transform/direct. Surface a friendly message.
+        throw new Error('This case was computed from a local trajectory/mapping, not a direct API request. No replayable request was captured.');
+      }
+
+      const out = await replayEndpoint(endpoint, body || {});
+      setReplayOut(out);
+    } catch (e) {
+      setReplayErr(String(e));
+    } finally {
+      setReplayBusy(false);
+    }
   };
 
   return (
@@ -297,7 +337,10 @@ function TestDetailsModal({ test, onClose }) {
                       {overGeo && badge('Δ geographic > tol')}
                       {Number.isFinite(dTvd) && Number.isFinite(tolCartesian) && Math.abs(dTvd) > tolCartesian && badge('Δ TVD > tol')}
                     </div>
-                    <button className="btn" onClick={() => openInVia(c)}>Open in Transform Via</button>
+                    <div className="flex gap-2">
+                      <button className="btn" onClick={() => runReplay(c, i)} disabled={replayBusy && replayIdx===i}>{replayBusy && replayIdx===i ? 'Replaying…' : 'Replay'}</button>
+                      <button className="btn" onClick={() => openInVia(c)}>Open in Transform Via</button>
+                    </div>
                   </div>
                   <div className="grid md:grid-cols-2 gap-3 mt-2 text-sm">
                     <div>
@@ -335,6 +378,18 @@ function TestDetailsModal({ test, onClose }) {
                       <CodeBlock value={c.actual} />
                     </div>
                   </div>
+                  {replayIdx === i && (
+                    <div className="mt-3 grid md:grid-cols-2 gap-3">
+                      <div>
+                        <div className="font-semibold">Replayed request</div>
+                        <CodeBlock value={{ endpoint: c.endpoint || 'POST /api/transform/direct', payload: c.payload || {} }} />
+                      </div>
+                      <div>
+                        <div className="font-semibold">Replayed response</div>
+                        {replayErr ? <pre className="bg-red-50 text-red-700 text-xs p-3 rounded">{replayErr}</pre> : <CodeBlock value={replayOut} />}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )})}
             </div>
@@ -367,6 +422,7 @@ function openInVia(caseRow) {
     const payload = caseRow?.payload || {};
     let path = [];
     let segment_path_ids = undefined;
+    let segment_preferred_ops = undefined;
     if (Array.isArray(payload.path)) {
       path = payload.path;
       if (Array.isArray(payload.segment_path_ids)) segment_path_ids = payload.segment_path_ids;
@@ -374,8 +430,16 @@ function openInVia(caseRow) {
       path = [caseRow.source_crs, caseRow.target_crs];
     }
     const position = payload.position || {};
+    // If this came from a direct call with a specific path_id or preferred_ops, propagate as segment hints
+    if (segment_path_ids == null && Number.isInteger(payload.path_id)) {
+      segment_path_ids = [payload.path_id];
+    }
+    if (!segment_preferred_ops && Array.isArray(payload.preferred_ops)) {
+      segment_preferred_ops = [payload.preferred_ops];
+    }
     const prefill = { path, position };
     if (segment_path_ids) prefill.segment_path_ids = segment_path_ids;
+    if (segment_preferred_ops) prefill.segment_preferred_ops = segment_preferred_ops;
     localStorage.setItem('prefillVia', JSON.stringify(prefill));
     window.location.hash = '#via';
   } catch (e) {
